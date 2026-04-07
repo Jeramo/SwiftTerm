@@ -1991,22 +1991,22 @@ extension TerminalView {
         send (data: (bytes)[...])
     }
     
-    func sendKeyUp ()
+    public func sendKeyUp ()
     {
         send (terminal.applicationCursor ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal)
     }
-    
-    func sendKeyDown ()
+
+    public func sendKeyDown ()
     {
         send (terminal.applicationCursor ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
     }
-    
-    func sendKeyLeft()
+
+    public func sendKeyLeft()
     {
         send (terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
     }
-    
-    func sendKeyRight ()
+
+    public func sendKeyRight ()
     {
         send (terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
     }

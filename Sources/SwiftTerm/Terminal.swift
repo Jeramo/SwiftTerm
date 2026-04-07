@@ -3393,10 +3393,10 @@ open class Terminal {
         }
         if pars.count > 1 && conformance != .vt100 {
             switch pars [1] {
-            case 0:
+            case 0, 1:
                 cc.send8bit = true
             case 2:
-                cc.send8bit = true
+                cc.send8bit = false
             default:
                 cc.send8bit = false
             }

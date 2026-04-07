@@ -2343,9 +2343,9 @@ open class Terminal {
             updateRange (j)
             // Deleted front part of line and everything before. This line will no longer be wrapped.
             eraseInBufferLine (y: j, start: 0, end: buffer.x + 1, clearWrap: true)
-            if buffer.x + 1 >= cols {
+            if buffer.x + 1 >= cols && j + 1 < rows {
                 // Deleted entire previous line. This next line can no longer be wrapped.
-                buffer.lines [j + 1].isWrapped = false
+                buffer.lines [buffer.yBase + j + 1].isWrapped = false
             }
             while (j != 0) {
                 j -= 1
@@ -4658,7 +4658,7 @@ open class Terminal {
     func cmdScrollDown (_ pars: [Int])
     {
         let p = min (max (pars.count == 0 ? 1 : pars [0], 1), rows)
-        let da = CharData.defaultAttr
+        let da = eraseAttr ()
 
         let row = buffer.scrollTop + buffer.yBase
 
@@ -4684,7 +4684,7 @@ open class Terminal {
     func cmdScrollUp (_ pars: [Int], _ collect: cstring)
     {
         let p = min (rows*2, max (pars.count == 0 ? 1 : pars [0], 1))
-        let da = CharData.defaultAttr
+        let da = eraseAttr ()
 
         if marginMode {
             let row = buffer.scrollTop + buffer.yBase

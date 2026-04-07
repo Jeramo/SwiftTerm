@@ -386,6 +386,11 @@ extension TerminalView {
             tf = fontSet.normal
         }
         
+        // SGR 8 — invisible: foreground matches background so text is hidden
+        if flags.contains (.invisible) {
+            fg = bg
+        }
+
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: tf,
             .foregroundColor: fg,
@@ -406,7 +411,7 @@ extension TerminalView {
         }
         return nsattr
     }
-    
+
     //
     // Given a vt100 attribute, return the NSAttributedString attributes used to render it
     //
@@ -430,7 +435,7 @@ extension TerminalView {
                 bg = .defaultInvertedColor
             }
         }
-        
+
         var useBoldForBrightColor: Bool = false
         // if high - bright colors are disabled in settings we will use bold font instead
         if case .ansi256(let code) = fg, code > 7, !useBrightColors {
@@ -438,7 +443,7 @@ extension TerminalView {
         }
         var tf: TTFont
         let isBold = flags.contains(.bold)
-        
+
         if isBold || useBoldForBrightColor {
             if flags.contains (.italic) {
                 tf = fontSet.boldItalic
@@ -450,12 +455,16 @@ extension TerminalView {
         } else {
             tf = fontSet.normal
         }
-        
+
         var fgColor = mapColor (color: fg, isFg: true, isBold: isBold, useBrightColors: useBrightColors)
         let bgColor = mapColor (color: bg, isFg: false, isBold: false)
         // Apply dim/faint attribute (SGR 2)
         if flags.contains (.dim) {
             fgColor = fgColor.dimmedColor (towards: bgColor)
+        }
+        // SGR 8 — invisible: foreground matches background so text is hidden
+        if flags.contains (.invisible) {
+            fgColor = bgColor
         }
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: tf,

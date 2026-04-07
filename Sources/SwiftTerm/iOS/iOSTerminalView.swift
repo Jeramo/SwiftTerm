@@ -307,7 +307,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     {
         showsHorizontalScrollIndicator = true
         indicatorStyle = .white
-        
+        // Prevent iOS from auto-adjusting content insets for the keyboard,
+        // which fights with updateScroller() and causes jitter during
+        // swipe-to-type (QuickPath) input.
+        contentInsetAdjustmentBehavior = .never
+        bounces = false
+
         setupKeyboardButtonColors()
         setupDisplayUpdates ();
         setupOptions ()
@@ -1365,12 +1370,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func updateScroller ()
     {
         let displayBuffer = terminal.displayBuffer
-        contentSize = CGSize (width: CGFloat (displayBuffer.cols) * cellDimension.width,
+        let newSize = CGSize (width: CGFloat (displayBuffer.cols) * cellDimension.width,
                               height: CGFloat (displayBuffer.lines.count) * cellDimension.height)
-        //contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
-        contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
-        //Xscroller.doubleValue = scrollPosition
-        //Xscroller.knobProportion = scrollThumbsize
+        let newOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
+        if contentSize != newSize {
+            contentSize = newSize
+        }
+        if contentOffset != newOffset {
+            contentOffset = newOffset
+        }
     }
 
 #if canImport(MetalKit)
@@ -1455,8 +1463,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
 #if canImport(MetalKit)
         if useMetalRenderer, let metalView = metalView {
-            metalView.frame = bounds
-            requestMetalDisplay()
+            if sizeChanged || originChanged {
+                metalView.frame = bounds
+                requestMetalDisplay()
+            }
         } else {
 	    if sizeChanged || originChanged {
                 setNeedsDisplay(bounds)
@@ -1473,6 +1483,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     open override var contentOffset: CGPoint {
         didSet {
+            guard contentOffset != oldValue else { return }
 #if canImport(MetalKit)
             if useMetalRenderer, metalView != nil {
                 requestMetalDisplay()

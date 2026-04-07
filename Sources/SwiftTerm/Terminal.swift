@@ -2970,7 +2970,8 @@ open class Terminal {
         case _ where pars.count == 3 && pars.first == 3:
             tdel.windowCommand(source: self, command: .moveWindowTo(x: pars [1], y: pars[2]))
         case _ where pars.count == 3 && pars.first == 4:
-            tdel.windowCommand(source: self, command: .moveWindowTo(x: pars [1], y: pars[2]))
+            // CSI 4 ; height ; width t — resize window to pixel size
+            tdel.windowCommand(source: self, command: .resizeWindowTo(width: pars [2], height: pars[1]))
         case [5]:
             tdel.windowCommand(source: self, command: .bringToFront)
         case [6]:
@@ -2978,7 +2979,8 @@ open class Terminal {
         case [7]:
             tdel.windowCommand(source: self, command: .refreshWindow)
         case _ where pars.count == 3 && pars.first == 8:
-            tdel.windowCommand(source: self, command: .resizeTerminal(cols: pars [1], rows: pars [2]))
+            // CSI 8 ; rows ; cols t — resize text area to character size
+            tdel.windowCommand(source: self, command: .resizeTerminal(cols: pars [2], rows: pars [1]))
         case [9, 0]:
             tdel.windowCommand(source: self, command: .restoreMaximizedWindow)
         case [9, 1]:
@@ -3422,7 +3424,8 @@ open class Terminal {
         curAttr = CharData.defaultAttr
         buffer.softReset ()
 
-        charset = nil
+        // Reset G0-G3 charset designations to defaults (ASCII in G0, nil for G1-G3)
+        gCharsets = [CharSets.defaultCharset, nil, nil, nil]
         setgLevel (0)
         conformance = .vt500
         hyperLinkTracking = nil

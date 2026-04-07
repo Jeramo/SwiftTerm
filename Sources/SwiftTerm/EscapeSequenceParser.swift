@@ -536,6 +536,8 @@ public class EscapeSequenceParser {
         case 12:   terminal.oscSetColors(data, startAt: 2)
         case 52:   terminal.oscClipboard(data)
         case 104:  terminal.oscResetColor(data)
+        case 110:  terminal.foregroundColor = Color.defaultForeground
+        case 111:  terminal.backgroundColor = Color.defaultBackground
         case 112:  terminal.tdel?.setCursorColor(source: terminal, color: nil)
         case 777:  terminal.oscNotification(data)
         case 1337: terminal.osciTerm2(data)

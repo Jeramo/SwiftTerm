@@ -137,6 +137,12 @@ public struct Attribute: Equatable, Hashable {
         if style.contains(.bold) {
             result += ";1"
         }
+        if style.contains(.dim) {
+            result += ";2"
+        }
+        if style.contains(.italic) {
+            result += ";3"
+        }
         if style.contains (.underline) {
             result += ";4"
         }
@@ -149,13 +155,16 @@ public struct Attribute: Equatable, Hashable {
         if style.contains (.invisible) {
             result += ";8"
         }
+        if style.contains(.crossedOut) {
+            result += ";9"
+        }
         
         switch fg {
         case .ansi256(let c):
-            if c > 16 {
+            if c >= 16 {
                 result += ";38;5;\(c)"
             } else {
-                result += ";\(c >= 8 ? 9 : 3)\(c >= 8 ? c - 8 : c);"
+                result += ";\(c >= 8 ? 9 : 3)\(c >= 8 ? c - 8 : c)"
             }
         case .trueColor(let r, let g, let b):
             result += ";38;2;\(r);\(g);\(b)"
@@ -165,10 +174,10 @@ public struct Attribute: Equatable, Hashable {
 
         switch bg {
         case .ansi256(let c):
-            if c > 16 {
+            if c >= 16 {
                 result += ";48;5;\(c)"
             } else {
-                result += ";\(c >= 8 ? 10 : 4)\(c >= 8 ? c - 8 : c);"
+                result += ";\(c >= 8 ? 10 : 4)\(c >= 8 ? c - 8 : c)"
             }
         case .trueColor(let r, let g, let b):
             result += ";48;2;\(r);\(g);\(b)"

@@ -2409,7 +2409,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             case .keyboardF9:
                 data = .bytes (EscapeSequences.cmdF [8])
             case .keyboardF10:
-                data = .bytes (EscapeSequences.cmdF [8])
+                data = .bytes (EscapeSequences.cmdF [9])
             case .keyboardF11:
                 data = .bytes (EscapeSequences.cmdF [10])
             case .keyboardF12, .keyboardF13, .keyboardF14, .keyboardF15, .keyboardF16,

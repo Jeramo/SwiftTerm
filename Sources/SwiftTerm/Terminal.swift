@@ -4055,8 +4055,9 @@ open class Terminal {
                 // Reset default color
                 curAttr = CharData.defaultAttr
             case 6:
-                // DECOM Reset
+                // DECOM Reset — cursor moves to home position per VT510 spec
                 originMode = false
+                setCursor(col: 0, row: 0)
             case 7:
                 setWraparound(false)
             case 12:
@@ -4287,8 +4288,9 @@ open class Terminal {
                 // Inverted colors
                 curAttr = CharData.invertedAttr
             case 6:
-                // DECOM Set
+                // DECOM Set — cursor moves to home position per VT510 spec
                 originMode = true
+                setCursor(col: 0, row: 0)
             case 7:
                 setWraparound(true)
             case 12:
@@ -4463,7 +4465,9 @@ open class Terminal {
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
 
-        if (p - 1 >= rows) {
+        if originMode {
+            buffer.y = min (buffer.scrollTop + p - 1, buffer.scrollBottom)
+        } else if (p - 1 >= rows) {
             buffer.y = rows - 1
         } else {
             buffer.y = p - 1
@@ -4609,7 +4613,7 @@ open class Terminal {
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
 
-        buffer.x = p - 1
+        buffer.x = (usingMargins() ? buffer.marginLeft : 0) + p - 1
         if buffer.x >= cols {
             buffer.x = cols - 1
         }

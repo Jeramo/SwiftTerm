@@ -398,7 +398,7 @@ public class Color: Hashable {
             case 3:
                 let (r, _) = parseHex (rest [(p+0)..<(p+1)], &idx)
                 let (g, _) = parseHex (rest [(p+1)..<(p+2)], &idx)
-                let (b, _) = parseHex (rest [(p+1)..<(p+3)], &idx)
+                let (b, _) = parseHex (rest [(p+2)..<(p+3)], &idx)
                 return makeColor (r, g, b, scale: 1)
             case 6:
                 let (r, _) = parseHex (rest [(p+0)..<(p+2)], &idx)

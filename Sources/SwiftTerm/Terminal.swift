@@ -326,7 +326,7 @@ open class Terminal {
     public private(set) var buffer: Buffer
 
     private let synchronizedOutputTimeoutSeconds: TimeInterval = 1.0
-    private var synchronizedOutputActive: Bool = false
+    public private(set) var synchronizedOutputActive: Bool = false
     private var synchronizedOutputBuffer: Buffer?
     private var synchronizedOutputBufferIsAlternate: Bool = false
     private var synchronizedOutputTimeoutItem: DispatchWorkItem?
@@ -4113,6 +4113,11 @@ open class Terminal {
                 fallthrough
             case 1047: // normal screen buffer - clearing it first
                    // Ensure the selection manager has the correct buffer
+                // Freeze the display on the current (alt) screen while
+                // the normal buffer is restored and the server redraws.
+                if !synchronizedOutputActive {
+                    beginSynchronizedOutput()
+                }
                 activateNormalBuffer(clearAlt: par == 1047 || par == 1049)
                 if (par == 1049){
                     cmdRestoreCursor ([], [])
@@ -4352,6 +4357,13 @@ open class Terminal {
             case 47: // alt screen buffer
                 fallthrough
             case 1047: // alt screen buffer
+                // Freeze the display on the current (normal) screen while
+                // the alt buffer is activated and the server redraws.
+                // endSynchronizedOutput in the DECRST handler (or the
+                // timeout) will reveal the final state atomically.
+                if !synchronizedOutputActive {
+                    beginSynchronizedOutput()
+                }
                 activateAltBuffer (fillAttr: nil)
                 refresh (startRow: 0, endRow: rows - 1)
                 syncScrollArea ()

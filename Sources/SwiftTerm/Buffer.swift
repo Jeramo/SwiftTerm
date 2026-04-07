@@ -491,7 +491,7 @@ public final class Buffer {
         }
         scrollBottom = newRows - 1
         if tabStops.count > newCols {
-            tabStops.removeSubrange (newCols..<tabStops.count-1)
+            tabStops.removeSubrange (newCols..<tabStops.count)
         } else {
             let n = newCols - tabStops.count
             for _ in 0..<n {
@@ -563,7 +563,7 @@ public final class Buffer {
             if tabStops.count > cols {
                 tabStops.removeSubrange(cols...)
             } else {
-                for _ in cols..<tabStops.count {
+                for _ in tabStops.count..<cols {
                     tabStops.append(false)
                 }
             }

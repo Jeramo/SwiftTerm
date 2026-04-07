@@ -2421,15 +2421,15 @@ open class Terminal {
         if marginMode {
             if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
                 let columnCount = buffer.marginRight-buffer.marginLeft+1
-                let rowCount = buffer.scrollBottom-buffer.scrollTop
+                let rowCount = buffer.scrollBottom-buffer.y
                 for _ in 0..<p {
                     for i in (0..<rowCount).reversed() {
                         let src = buffer.lines [row+i]
                         let dst = buffer.lines [row+i+1]
-                        
+
                         dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
                     }
-                    
+
                     let last = buffer.lines [row]
                     last.fill (with: CharData (attribute: ea), atCol: buffer.marginLeft, len: columnCount)
                 }
@@ -4444,11 +4444,17 @@ open class Terminal {
     //
     func cmdVPositionRelative (_ pars: [Int], _ collect: cstring)
     {
+        let buffer = self.buffer
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
         let newY = buffer.y + p
 
-        if newY >= rows {
-            buffer.y = rows - 1
+        var bottom = buffer.scrollBottom
+        if buffer.y > bottom {
+            bottom = rows - 1
+        }
+
+        if newY >= bottom {
+            buffer.y = bottom
         } else {
             buffer.y = newY
         }
@@ -4601,10 +4607,14 @@ open class Terminal {
     func cmdHPositionRelative (_ pars: [Int], _ collect: cstring)
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
-        
+
+        var right = marginMode ? buffer.marginRight : cols - 1
+        if buffer.x > right {
+            right = cols - 1
+        }
         buffer.x += p
-        if buffer.x >= cols {
-            buffer.x = cols - 1
+        if buffer.x > right {
+            buffer.x = right
         }
     }
 
@@ -4767,15 +4777,15 @@ open class Terminal {
         if marginMode {
             if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
                 let columnCount = buffer.marginRight-buffer.marginLeft+1
-                let rowCount = buffer.scrollBottom-buffer.scrollTop
+                let rowCount = buffer.scrollBottom-buffer.y
                 for _ in 0..<p {
                     for i in 0..<(rowCount) {
                         let src = buffer.lines [row+i+1]
                         let dst = buffer.lines [row+i]
-                        
+
                         dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
                     }
-                    
+
                     let last = buffer.lines [row+rowCount]
                     last.fill (with: CharData (attribute: ea), atCol: buffer.marginLeft, len: columnCount)
                 }
@@ -5114,10 +5124,8 @@ open class Terminal {
         endSynchronizedOutput ()
         options.rows = rows
         options.cols = cols
-        let savedCursorHidden = cursorHidden
         setup (isReset: true)
         clearAllKittyImages()
-        cursorHidden = savedCursorHidden
         refresh (startRow: 0, endRow: rows-1)
         syncScrollArea ()
     }

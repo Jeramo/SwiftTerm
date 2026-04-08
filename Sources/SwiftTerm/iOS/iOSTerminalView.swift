@@ -1373,12 +1373,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let newSize = CGSize (width: CGFloat (displayBuffer.cols) * cellDimension.width,
                               height: CGFloat (displayBuffer.lines.count) * cellDimension.height)
         let newOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
-        if contentSize != newSize {
-            contentSize = newSize
-        }
-        if contentOffset != newOffset {
-            contentOffset = newOffset
-        }
+        let sizeChanged = contentSize != newSize
+        let offsetChanged = contentOffset != newOffset
+        guard sizeChanged || offsetChanged else { return }
+        // Disable implicit animations so the scroll position snaps instantly
+        // instead of visibly sliding (e.g., during tmux tab switch redraws).
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if sizeChanged  { contentSize = newSize }
+        if offsetChanged { contentOffset = newOffset }
+        CATransaction.commit()
     }
 
 #if canImport(MetalKit)

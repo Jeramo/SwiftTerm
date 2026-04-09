@@ -1372,7 +1372,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let displayBuffer = terminal.displayBuffer
         let newSize = CGSize (width: CGFloat (displayBuffer.cols) * cellDimension.width,
                               height: CGFloat (displayBuffer.lines.count) * cellDimension.height)
-        let newOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
+        let newOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.yDisp) * cellDimension.height)
         let sizeChanged = contentSize != newSize
         let offsetChanged = contentOffset != newOffset
         guard sizeChanged || offsetChanged else { return }

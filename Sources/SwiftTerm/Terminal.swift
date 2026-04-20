@@ -662,9 +662,15 @@ open class Terminal {
         normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: options.scrollback)
         normalBuffer.fillViewportRows()
 
-        // The alt buffer should never have scrollback.
+        // The alt buffer should never have scrollback content, but we pass
+        // scrollback: 0 instead of nil so Buffer.hasScrollback is true and
+        // Buffer.isReflowEnabled returns true. Buffer's capacity math
+        // reduces rows + 0 = rows, so no extra lines are allocated — the
+        // only effect is that resize() runs reflow() on the alt buffer,
+        // so tmux / vim / less stop leaving stale, old-width wrapping
+        // behind when the user pinch-zooms the terminal.
         // See http://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-The-Alternate-Screen-Buffer
-        altBuffer = Buffer (cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: nil)
+        altBuffer = Buffer (cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: 0)
         buffer = normalBuffer
 
         cc = CC(send8bit: false)

@@ -1491,8 +1491,18 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 #if canImport(MetalKit)
             if useMetalRenderer, metalView != nil {
                 requestMetalDisplay()
+                return
             }
 #endif
+            // CG renderer: drawTerminalContents picks the first visible row
+            // from contentOffset.y (see comment in draw()), so the backing
+            // layer is stale after any programmatic scroll (tmux pane scroll,
+            // scrolled() delegate, autoscroll-to-bottom). Without this the
+            // viewport keeps showing the previous offset's pixels until the
+            // next feed-driven setNeedsDisplay catches up — visible as the
+            // input area "shifting down" with stale ghost content when typing
+            // in tmux + Claude Code.
+            setNeedsDisplay(bounds)
         }
     }
 

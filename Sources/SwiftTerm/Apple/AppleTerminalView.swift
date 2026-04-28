@@ -757,7 +757,7 @@ extension TerminalView {
                 // in the middle of monospaced TUI output. Pure emoji
                 // (U+1F000+) are left alone so 😀 / 🦄 / 🎉 still render
                 // as emoji.
-                pendingText.append(forceTextPresentationForBMPDefaultEmoji(character))
+                pendingText.append(forceTextPresentationForBMPDefaultEmoji(String(character)))
                 previousPlaceholder = nil
                 previousPlaceholderAttribute = nil
             }

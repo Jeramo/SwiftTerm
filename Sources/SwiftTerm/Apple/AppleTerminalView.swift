@@ -589,6 +589,50 @@ extension TerminalView {
     //
     // Given a line of text with attributes, returns column-aware segments that can be drawn later.
     //
+    /// Returns `s` with U+FE0E appended after each BMP code point whose
+    /// Unicode default presentation is emoji, replacing any explicit U+FE0F
+    /// that follows. This forces text presentation in CoreText for symbols
+    /// like ⏺ ✻ ● ⚠ ❄ ⭕ that would otherwise be rendered through Apple
+    /// Color Emoji as colorful pictographs in the middle of monospaced
+    /// terminal output. SMP-range scalars (U+1F000+) are left untouched so
+    /// real emoji still render normally.
+    private func forceTextPresentationForBMPDefaultEmoji(_ s: String) -> String {
+        let scalars = Array(s.unicodeScalars)
+        // Fast path: single scalar that doesn't need rewriting.
+        if scalars.count == 1 {
+            let only = scalars[0]
+            if only.value < 0x1F000, only.properties.isEmojiPresentation {
+                var out = s
+                out.unicodeScalars.append(UnicodeScalar(0xFE0E)!)
+                return out
+            }
+            return s
+        }
+        var result = ""
+        result.reserveCapacity(s.count + 1)
+        var i = 0
+        while i < scalars.count {
+            let scalar = scalars[i]
+            let isBMPDefaultEmoji = scalar.value < 0x1F000 && scalar.properties.isEmojiPresentation
+            result.unicodeScalars.append(scalar)
+            if isBMPDefaultEmoji {
+                let nextValue: UInt32? = i + 1 < scalars.count ? scalars[i + 1].value : nil
+                if nextValue == 0xFE0F {
+                    // Replace explicit emoji selector with text selector.
+                    result.unicodeScalars.append(UnicodeScalar(0xFE0E)!)
+                    i += 2
+                    continue
+                } else if nextValue != 0xFE0E {
+                    // No variation selector present — insert text selector.
+                    result.unicodeScalars.append(UnicodeScalar(0xFE0E)!)
+                }
+                // else nextValue == FE0E: already correct, leave alone.
+            }
+            i += 1
+        }
+        return result
+    }
+
     func buildAttributedString (row: Int, line: BufferLine, cols: Int) -> ViewLineInfo
     {
         var segments: [ViewLineSegment] = []
@@ -703,21 +747,17 @@ extension TerminalView {
                 previousPlaceholder = placeholder
                 previousPlaceholderAttribute = attr
             } else {
-                // Common path: just accumulate into the batch
-                pendingText.append(character)
+                // Common path: just accumulate into the batch.
                 // Force text presentation for BMP code points whose Unicode
                 // default presentation is emoji (⏺ U+23FA, ✻ U+273B, ●
-                // U+25CF, ⚠ U+26A0, ❄ U+2744, ⭕ U+2B55, etc.). Without an
-                // explicit variation selector iOS routes these through Apple
-                // Color Emoji and renders them as colorful pictographs in
-                // the middle of monospaced TUI output. Pure emoji (U+1F000+)
-                // are left alone so 😀 / 🦄 / 🎉 still render as emoji.
-                if character.unicodeScalars.count == 1,
-                   let scalar = character.unicodeScalars.first,
-                   scalar.value < 0x1F000,
-                   scalar.properties.isEmojiPresentation {
-                    pendingText.unicodeScalars.append(UnicodeScalar(0xFE0E)!)
-                }
+                // U+25CF, ⚠ U+26A0, ❄ U+2744, ⭕ U+2B55, etc.) by appending
+                // U+FE0E and replacing any explicit U+FE0F. Without an
+                // explicit text variation selector iOS routes these through
+                // Apple Color Emoji and renders them as colorful pictographs
+                // in the middle of monospaced TUI output. Pure emoji
+                // (U+1F000+) are left alone so 😀 / 🦄 / 🎉 still render
+                // as emoji.
+                pendingText.append(forceTextPresentationForBMPDefaultEmoji(character))
                 previousPlaceholder = nil
                 previousPlaceholderAttribute = nil
             }

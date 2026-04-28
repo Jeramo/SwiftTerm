@@ -601,6 +601,9 @@ extension TerminalView {
     /// glyph for them. We substitute with a visually-equivalent text-only
     /// scalar before FE0E processing so the user sees a monochrome glyph.
     private static let textOnlySubstitutions: [UInt32: UnicodeScalar] = [
+        0x23FA: UnicodeScalar(0x25CF)!, // ⏺ → ● (BLACK CIRCLE) — Claude Code's tool-call indicator
+        0x23F8: UnicodeScalar(0x2225)!, // ⏸ → ∥ (PARALLEL TO) — pause
+        0x23F9: UnicodeScalar(0x25A0)!, // ⏹ → ■ (BLACK SQUARE) — stop
         0x2B55: UnicodeScalar(0x25EF)!, // ⭕ → ◯ (LARGE CIRCLE)
     ]
 

@@ -915,51 +915,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
         }
     }
-
-    private func emitWheelTick(up: Bool, at point: CGPoint) {
-        if allowMouseReporting && terminal.mouseMode != .off {
-            // Mouse-mode app (tmux/vim/htop/less): forward as a wheel event
-            // through SwiftTerm's existing encoder, which already picks
-            // SGR / urxvt / X10 from terminal.mouseMode. Buttons 64/65 are
-            // SGR wheel-up / wheel-down. No release pair — wheel events are
-            // one-shot.
-            let hit = calculateTapHit(point: point)
-            if let grid = hit.grid.toScreenCoordinate(from: terminal.displayBuffer) {
-                terminal.sendEvent(
-                    buttonFlags: up ? 64 : 65,
-                    x: grid.col, y: grid.row,
-                    pixelX: hit.pixels.col, pixelY: hit.pixels.row
-                )
-            }
-        } else {
-            // No mouse-mode app: drive Pling's local scrollback. Three lines
-            // per tick matches macOS Terminal.app feel.
-            if up { scrollUp(lines: 3) } else { scrollDown(lines: 3) }
-        }
-    }
-
-    @objc func trackpadScrollHandler(_ g: UIPanGestureRecognizer) {
-        switch g.state {
-        case .began:
-            trackpadScrollAccumulator = 0
-        case .changed:
-            let dy = g.translation(in: self).y
-            g.setTranslation(.zero, in: self)
-            trackpadScrollAccumulator += dy
-
-            let lineHeight = max(cellDimension.height, 1)
-            // dy > 0 → fingers moved down → content should scroll up → wheel-up.
-            while abs(trackpadScrollAccumulator) >= lineHeight {
-                let wheelUp = trackpadScrollAccumulator > 0
-                trackpadScrollAccumulator -= (wheelUp ? lineHeight : -lineHeight)
-                emitWheelTick(up: wheelUp, at: g.location(in: self))
-            }
-        case .ended, .cancelled, .failed:
-            trackpadScrollAccumulator = 0
-        default: break
-        }
-    }
-
+   
     @MainActor
     func startSelectionTimer (_ callback: @MainActor @escaping ()->()) {
         panTask = Task {
@@ -1044,9 +1000,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
     
-    var trackpadScrollGesture: UIPanGestureRecognizer?
-    private var trackpadScrollAccumulator: CGFloat = 0
-
     var panMouseGesture: UIPanGestureRecognizer?
     func enableMousePanGesture () {
         guard panMouseGesture == nil else {
@@ -1117,26 +1070,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         singleTap.require(toFail: doubleTap)
         doubleTap.require(toFail: tripleTap)
-
-        if #available(iOS 13.4, visionOS 1.0, *) {
-            // Trackpad two-finger scroll. allowedTouchTypes = [] keeps finger
-            // pans on their existing path; allowedScrollTypesMask = .continuous
-            // is the iOS 13.4+ knob that delivers indirect-pointer scroll
-            // events here.
-            let trackpadScroll = UIPanGestureRecognizer(
-                target: self, action: #selector(trackpadScrollHandler(_:))
-            )
-            trackpadScroll.allowedScrollTypesMask = .continuous
-            trackpadScroll.allowedTouchTypes = []
-            addGestureRecognizer(trackpadScroll)
-            trackpadScrollGesture = trackpadScroll
-
-            // Stop the inherited UIScrollView's own pan recognizer from also
-            // responding to indirect scroll events. Finger pans on the scroll
-            // view are unaffected (those go through the touch path, not the
-            // scroll-types mask).
-            self.panGestureRecognizer.allowedScrollTypesMask = []
-        }
     }
 
     func setupLinkReportingInteractions ()

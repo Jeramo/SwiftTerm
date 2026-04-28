@@ -60,27 +60,51 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let bold: UIFont
         let italic: UIFont
         let boldItalic: UIFont
-        
+
         static var defaultFont: UIFont {
             UIFont.monospacedSystemFont (ofSize: 12, weight: .regular)
         }
-        
+
+        /// Wrap a font with a cascade list that prefers text-symbol fonts
+        /// before iOS's default fallback. Otherwise code points with
+        /// "default emoji presentation" (⏺, ✻, ●, ⚠, ❄, ⭕, etc.) fall
+        /// through to Apple Color Emoji and render as colorful pictographs
+        /// in the middle of monospaced terminal output. This is rarely
+        /// what users want for TUI tools like Claude Code.
+        private static func withTextSymbolFallback (_ font: UIFont) -> UIFont {
+            let size = font.pointSize
+            let fallbackNames = ["AppleSymbols", "STIXTwoText-Regular", "Menlo-Regular", "HelveticaNeue"]
+            let cascade: [CTFontDescriptor] = fallbackNames.map { name in
+                CTFontDescriptorCreateWithNameAndSize(name as CFString, size)
+            }
+            let attrs: [CFString: Any] = [
+                kCTFontCascadeListAttribute: cascade
+            ]
+            let descriptor = CTFontDescriptorCreateCopyWithAttributes(
+                font.fontDescriptor as CTFontDescriptor,
+                attrs as CFDictionary
+            )
+            let ct = CTFontCreateWithFontDescriptor(descriptor, size, nil)
+            return ct as UIFont
+        }
+
         public init(font baseFont: UIFont) {
+            let baseFont = Self.withTextSymbolFallback(baseFont)
             self.normal = baseFont
             if let boldDescriptor = baseFont.fontDescriptor.withSymbolicTraits ([.traitBold]) {
-                self.bold = UIFont (descriptor: boldDescriptor, size: 0)
+                self.bold = Self.withTextSymbolFallback(UIFont (descriptor: boldDescriptor, size: 0))
             } else {
                 self.bold = baseFont
             }
-            
+
             if let italicDescriptor = baseFont.fontDescriptor.withSymbolicTraits ([.traitItalic]) {
-                self.italic = UIFont (descriptor: italicDescriptor, size: 0)
+                self.italic = Self.withTextSymbolFallback(UIFont (descriptor: italicDescriptor, size: 0))
             } else {
                 self.italic = baseFont
             }
-            
+
             if let boldItalicDescriptor = baseFont.fontDescriptor.withSymbolicTraits ([.traitItalic, .traitBold]) {
-                self.boldItalic = UIFont (descriptor: boldItalicDescriptor, size: 0)
+                self.boldItalic = Self.withTextSymbolFallback(UIFont (descriptor: boldItalicDescriptor, size: 0))
             } else {
                 if self.italic != baseFont {
                     self.boldItalic = self.italic

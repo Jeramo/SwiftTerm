@@ -1006,6 +1006,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return
         }
         let gesture = UIPanGestureRecognizer (target: self, action: #selector(panMouseHandler))
+        if #available(iOS 13.4, visionOS 1.0, *) {
+            gesture.allowedTouchTypes = [
+                UITouch.TouchType.direct.rawValue as NSNumber,
+                UITouch.TouchType.indirectPointer.rawValue as NSNumber,
+            ]
+        }
         addGestureRecognizer(gesture)
         panMouseGesture = gesture
     }
@@ -1024,6 +1030,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return
         }
         let gesture = UIPanGestureRecognizer (target: self, action: #selector(panSelectionHandler))
+        if #available(iOS 13.4, visionOS 1.0, *) {
+            // Widen so Magic Keyboard click+drag (UITouch.TouchType.indirectPointer)
+            // fires the same selection path finger drag uses. The default does not
+            // include .indirectPointer, which is why trackpad drag-select fails today.
+            gesture.allowedTouchTypes = [
+                UITouch.TouchType.direct.rawValue as NSNumber,
+                UITouch.TouchType.indirectPointer.rawValue as NSNumber,
+            ]
+        }
         addGestureRecognizer(gesture)
         self.panSelectionGesture = gesture
     }

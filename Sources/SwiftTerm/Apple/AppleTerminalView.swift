@@ -705,6 +705,19 @@ extension TerminalView {
             } else {
                 // Common path: just accumulate into the batch
                 pendingText.append(character)
+                // Force text presentation for BMP code points whose Unicode
+                // default presentation is emoji (⏺ U+23FA, ✻ U+273B, ●
+                // U+25CF, ⚠ U+26A0, ❄ U+2744, ⭕ U+2B55, etc.). Without an
+                // explicit variation selector iOS routes these through Apple
+                // Color Emoji and renders them as colorful pictographs in
+                // the middle of monospaced TUI output. Pure emoji (U+1F000+)
+                // are left alone so 😀 / 🦄 / 🎉 still render as emoji.
+                if character.unicodeScalars.count == 1,
+                   let scalar = character.unicodeScalars.first,
+                   scalar.value < 0x1F000,
+                   scalar.properties.isEmojiPresentation {
+                    pendingText.unicodeScalars.append(UnicodeScalar(0xFE0E)!)
+                }
                 previousPlaceholder = nil
                 previousPlaceholderAttribute = nil
             }

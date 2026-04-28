@@ -596,18 +596,46 @@ extension TerminalView {
     /// Color Emoji as colorful pictographs in the middle of monospaced
     /// terminal output. SMP-range scalars (U+1F000+) are left untouched so
     /// real emoji still render normally.
+    /// iOS-specific code points where CoreText routes to Apple Color Emoji
+    /// even when U+FE0E is appended, because no installed text font has a
+    /// glyph for them. We substitute with a visually-equivalent text-only
+    /// scalar before FE0E processing so the user sees a monochrome glyph.
+    private static let textOnlySubstitutions: [UInt32: UnicodeScalar] = [
+        0x2B55: UnicodeScalar(0x25EF)!, // ⭕ → ◯ (LARGE CIRCLE)
+    ]
+
     private func forceTextPresentationForBMPDefaultEmoji(_ s: String) -> String {
-        let scalars = Array(s.unicodeScalars)
-        // Fast path: single scalar that doesn't need rewriting.
+        let originalScalars = Array(s.unicodeScalars)
+        // First pass: substitute known iOS-misbehaving code points so the
+        // FE0E pass below has something CoreText can actually render.
+        var scalars: [UnicodeScalar] = []
+        scalars.reserveCapacity(originalScalars.count)
+        for scalar in originalScalars {
+            if let replacement = Self.textOnlySubstitutions[scalar.value] {
+                scalars.append(replacement)
+            } else {
+                scalars.append(scalar)
+            }
+        }
+
+        // Fast path: single scalar that doesn't need a variation selector.
         if scalars.count == 1 {
             let only = scalars[0]
             if only.value < 0x1F000, only.properties.isEmojiPresentation {
-                var out = s
+                var out = ""
+                out.unicodeScalars.append(only)
                 out.unicodeScalars.append(UnicodeScalar(0xFE0E)!)
+                return out
+            }
+            // Substitution may have happened even without FE0E append.
+            if scalars[0] != originalScalars[0] {
+                var out = ""
+                out.unicodeScalars.append(only)
                 return out
             }
             return s
         }
+
         var result = ""
         result.reserveCapacity(s.count + 1)
         var i = 0

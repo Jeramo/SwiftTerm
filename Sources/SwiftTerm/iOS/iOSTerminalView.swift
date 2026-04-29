@@ -1380,6 +1380,21 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     open func scrolled(source terminal: Terminal, yDisp: Int) {
         //XselectionView.notifyScrolled(source: terminal)
         updateScroller()
+        // Once scrollback is full, lines.count is capped and yDisp is pinned at
+        // the bottom, so updateScroller's contentSize/contentOffset diff is
+        // empty and contentOffset.didSet's setNeedsDisplay never fires — but a
+        // buffer scroll DID happen (top line dropped, bottom line added). Force
+        // a repaint here so inline TUIs like Claude Code don't leave stale
+        // ghost rows above the prompt when typing during heavy output.
+#if canImport(MetalKit)
+        if useMetalRenderer {
+            requestMetalDisplay()
+        } else {
+            setNeedsDisplay(bounds)
+        }
+#else
+        setNeedsDisplay(bounds)
+#endif
         terminalDelegate?.scrolled(source: self, position: scrollPosition)
     }
     

@@ -375,6 +375,21 @@ struct UnicodeUtil {
             return 2
         }
 
+        // BMP code points whose Unicode default presentation is emoji
+        // (e.g. ⏺ ⏸ ⏹ ⭕) are treated as width 2 by modern TUI renderers
+        // (npm string-width, wcwidth-cjk, Ink) even without an explicit
+        // VS16, because most terminals render them as 2-cell emoji glyphs.
+        // SwiftTerm previously returned width 1 for these because they are
+        // "Neutral" in UAX #11. The fork's text-style substitutions render
+        // them as 1-cell glyphs, but width MUST still be 2 to match the
+        // TUI renderer's cursor model — otherwise every occurrence drifts
+        // the cursor by 1 column and subsequent writes land mid-line. Seen
+        // with Claude Code's `⏺` tool indicator producing chars-inserted-
+        // mid-line corruption when typing during streaming output.
+        if irune < 0x1F000 && rune.properties.isEmojiPresentation {
+            return 2
+        }
+
         return 1
     }
 }

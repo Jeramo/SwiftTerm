@@ -326,10 +326,13 @@ open class Terminal {
     public private(set) var buffer: Buffer
 
     private let synchronizedOutputTimeoutSeconds: TimeInterval = 0.15
+    private let synchronizedOutputAutoIdleSeconds: TimeInterval = 0.016
     public private(set) var synchronizedOutputActive: Bool = false
     private var synchronizedOutputBuffer: Buffer?
     private var synchronizedOutputBufferIsAlternate: Bool = false
     private var synchronizedOutputTimeoutItem: DispatchWorkItem?
+    private var synchronizedOutputAutoIdleItem: DispatchWorkItem?
+    private var synchronizedOutputIsAuto: Bool = false
 
     var displayBuffer: Buffer {
         synchronizedOutputBuffer ?? buffer
@@ -4126,7 +4129,7 @@ open class Terminal {
                 // Freeze the display on the current (alt) screen while
                 // the normal buffer is restored and the server redraws.
                 if !synchronizedOutputActive {
-                    beginSynchronizedOutput()
+                    beginSynchronizedOutput(auto: true)
                 }
                 activateNormalBuffer(clearAlt: par == 1047 || par == 1049)
                 if (par == 1049){
@@ -4371,9 +4374,10 @@ open class Terminal {
                 // Freeze the display on the current (normal) screen while
                 // the alt buffer is activated and the server redraws.
                 // endSynchronizedOutput in the DECRST handler (or the
-                // timeout) will reveal the final state atomically.
+                // idle gap, or the safety ceiling) will reveal the final
+                // state atomically.
                 if !synchronizedOutputActive {
-                    beginSynchronizedOutput()
+                    beginSynchronizedOutput(auto: true)
                 }
                 activateAltBuffer (fillAttr: nil)
                 refresh (startRow: 0, endRow: rows - 1)
@@ -4954,6 +4958,12 @@ open class Terminal {
     public func parse (buffer: ArraySlice<UInt8>)
     {
         parser.parse(data: buffer)
+        // Auto-sync (started on alt-buffer switch for non-2026 TUIs) ends on
+        // the first inter-chunk idle gap so the redraw is revealed promptly
+        // instead of waiting for the safety ceiling.
+        if synchronizedOutputActive && synchronizedOutputIsAuto {
+            scheduleSynchronizedOutputAutoIdle()
+        }
     }
      
     /**
@@ -5498,18 +5508,29 @@ open class Terminal {
         // This should call the viewport sync-scroll-area
     }
 
-    private func beginSynchronizedOutput ()
+    private func beginSynchronizedOutput (auto: Bool = false)
     {
         let wasActive = synchronizedOutputActive
         if !synchronizedOutputActive {
             synchronizedOutputActive = true
+            synchronizedOutputIsAuto = auto
             synchronizedOutputBuffer = snapshotBuffer(buffer)
             synchronizedOutputBufferIsAlternate = isCurrentBufferAlternate
         } else if synchronizedOutputBuffer == nil {
             synchronizedOutputBuffer = snapshotBuffer(buffer)
             synchronizedOutputBufferIsAlternate = isCurrentBufferAlternate
         }
+        // Explicit DECSET 2026 promotes a prior auto-sync to explicit:
+        // wait for DECRST 2026 or the safety ceiling, not just an idle gap.
+        if !auto {
+            synchronizedOutputIsAuto = false
+            synchronizedOutputAutoIdleItem?.cancel()
+            synchronizedOutputAutoIdleItem = nil
+        }
         scheduleSynchronizedOutputTimeout()
+        if synchronizedOutputIsAuto {
+            scheduleSynchronizedOutputAutoIdle()
+        }
         if !wasActive {
             tdel?.synchronizedOutputChanged(source: self, active: true)
         }
@@ -5521,10 +5542,13 @@ open class Terminal {
             return
         }
         synchronizedOutputActive = false
+        synchronizedOutputIsAuto = false
         synchronizedOutputBuffer = nil
         synchronizedOutputBufferIsAlternate = false
         synchronizedOutputTimeoutItem?.cancel()
         synchronizedOutputTimeoutItem = nil
+        synchronizedOutputAutoIdleItem?.cancel()
+        synchronizedOutputAutoIdleItem = nil
         refresh (startRow: 0, endRow: rows - 1)
         tdel?.synchronizedOutputChanged(source: self, active: false)
     }
@@ -5540,6 +5564,19 @@ open class Terminal {
         }
         synchronizedOutputTimeoutItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + synchronizedOutputTimeoutSeconds, execute: workItem)
+    }
+
+    private func scheduleSynchronizedOutputAutoIdle ()
+    {
+        synchronizedOutputAutoIdleItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.synchronizedOutputActive, self.synchronizedOutputIsAuto else {
+                return
+            }
+            self.endSynchronizedOutput()
+        }
+        synchronizedOutputAutoIdleItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + synchronizedOutputAutoIdleSeconds, execute: workItem)
     }
 
     private func snapshotBuffer (_ source: Buffer) -> Buffer

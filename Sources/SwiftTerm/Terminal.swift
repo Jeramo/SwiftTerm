@@ -4958,11 +4958,17 @@ open class Terminal {
     public func parse (buffer: ArraySlice<UInt8>)
     {
         parser.parse(data: buffer)
-        // Auto-sync (started on alt-buffer switch for non-2026 TUIs) ends on
-        // the first inter-chunk idle gap so the redraw is revealed promptly
-        // instead of waiting for the safety ceiling.
-        if synchronizedOutputActive && synchronizedOutputIsAuto {
-            scheduleSynchronizedOutputAutoIdle()
+        if synchronizedOutputActive {
+            // Reset the safety timer on each chunk so a slow-network redraw
+            // that spans more than the safety window doesn't get its partial
+            // state revealed mid-stream. DECRST 2026 still ends immediately;
+            // a truly stuck producer ends after a true idle gap.
+            scheduleSynchronizedOutputTimeout()
+            // Auto-sync (started on alt-buffer switch for non-2026 TUIs) ends
+            // on the much shorter idle gap so the redraw is revealed promptly.
+            if synchronizedOutputIsAuto {
+                scheduleSynchronizedOutputAutoIdle()
+            }
         }
     }
      

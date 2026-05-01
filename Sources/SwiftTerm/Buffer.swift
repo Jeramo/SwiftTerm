@@ -1153,6 +1153,14 @@ public final class Buffer {
             let available = right - _x + 1
             let runLen = min(available, bytes.endIndex - idx)
             let row = _lines[_y + _yBase]
+            // Clean up at the run boundaries: the first cell may be the
+            // trailing half of a previous wide char (orphaning its leading
+            // half), and the last cell may be the leading half of a wide
+            // char (orphaning its trailing half just past the run).
+            var emptyCell = CharData.Null
+            emptyCell.attribute = attribute
+            row.cleanupWideCharHalves(at: _x, fillData: emptyCell)
+            row.cleanupWideCharHalves(at: _x + runLen - 1, fillData: emptyCell)
             for i in 0..<runLen {
                 row[_x + i] = CharData(attribute: attribute, code: Int32(bytes[idx + i]), size: 1)
             }
@@ -1222,6 +1230,17 @@ public final class Buffer {
         if _x >= _cols {
             _x = _cols-1
         }
+        // Clean up any wide-char companion that the existing cell at _x
+        // belongs to before we overwrite it; otherwise the orphaned half
+        // (e.g. a leading "size 2" cell at _x-1 whose trailing half we're
+        // about to clobber) renders as a different glyph paired with the
+        // wrong stub, producing the kind of cell-level corruption mosh
+        // redraws expose.
+        var wideEmpty = CharData(attribute: curAttr, scalar: UnicodeScalar(0)!, size: 0)
+        wideEmpty.attribute = curAttr
+        var emptyCell = CharData.Null
+        emptyCell.attribute = curAttr
+        bufferRow.cleanupWideCharHalves(at: _x, fillData: emptyCell)
         bufferRow[_x] = charData
         _x += 1
 
@@ -1229,15 +1248,18 @@ public final class Buffer {
         // for graphemes bigger than fullwidth we can simply loop to zero
         // we already made sure above, that buffer.x + chWidth will not overflow right
         if chWidth > 1 {
-            let wideEmpty = CharData(attribute: curAttr, scalar: UnicodeScalar(0)!, size: 0)
             chWidth -= 1
             while chWidth != 0 && _x < _cols {
+                // Same cleanup before placing the trailing stub: if this
+                // cell was itself the leading half of an earlier wide
+                // char, its old trailing half must be cleared.
+                bufferRow.cleanupWideCharHalves(at: _x, fillData: emptyCell)
                 bufferRow [_x] = wideEmpty
                 _x += 1
                 chWidth -= 1
             }
         }
-        
+
     }
     
     func dumpConsole ()

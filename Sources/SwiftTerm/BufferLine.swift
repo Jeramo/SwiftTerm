@@ -125,6 +125,32 @@ public final class BufferLine: CustomDebugStringConvertible {
         return false
     }
 
+    /// Clean up an orphaned wide-character half at `pos`. If `pos` is the
+    /// trailing half (size 0) of a wide character whose leading half lives
+    /// at `pos-1`, the leading half is replaced with `fillData`. If `pos`
+    /// is the leading half (size 2) of a wide character whose trailing
+    /// half lives at `pos+1`, the trailing half is replaced. This must be
+    /// called before any write that lands on a cell which is part of a
+    /// wide-character pair, otherwise we leave a "size 2 → garbage" or
+    /// "garbage → size 0 stub" pairing that the renderer draws weirdly
+    /// (the leading half displays a character but its companion is now a
+    /// different glyph or unrelated). Used by replaceCells / writes that
+    /// don't already track wide-char boundaries.
+    @inline(__always)
+    public func cleanupWideCharHalves(at pos: Int, fillData: CharData) {
+        let len = dataSize
+        guard pos >= 0 && pos < len else { return }
+        let cell = data[pos]
+        if cell.width == 2 && pos + 1 < len {
+            data[pos + 1] = fillData
+        } else if cell.width == 0 && pos > 0 {
+            let leading = data[pos - 1]
+            if leading.width == 2 {
+                data[pos - 1] = fillData
+            }
+        }
+    }
+
     /// Repeatedly inserts a CharData elements into the buffer line.
     /// - Parameters:
     ///  - pos: position where to insert the data

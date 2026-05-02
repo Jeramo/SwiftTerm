@@ -520,11 +520,21 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         disableSelectionPanGesture()
         if let start = UIPasteboard.general.string {
             if terminal.bracketedPasteMode {
+                // Strip ESC from paste content. If the user's clipboard
+                // contains \e[201~ it would prematurely close the bracketed-
+                // paste region and the remainder would be interpreted as
+                // terminal commands -- the classic "bracketed paste
+                // injection" vector. xterm and iTerm2 strip ESC entirely
+                // for the same reason; that's safer than trying to detect
+                // only the specific terminator since any escape inside
+                // paste content corrupts shells that read the buffer in
+                // cooked mode.
+                let sanitized = start.replacingOccurrences(of: "\u{1B}", with: "")
                 send(data: EscapeSequences.bracketedPasteStart[0...])
-            }
-            send(txt: start)
-            if terminal.bracketedPasteMode {
+                send(txt: sanitized)
                 send(data: EscapeSequences.bracketedPasteEnd[0...])
+            } else {
+                send(txt: start)
             }
             queuePendingDisplay()
         }

@@ -1179,8 +1179,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             if !terminal.keyboardEnhancementFlags.isEmpty {
                 if isPaste, terminal.bracketedPasteMode {
                     pendingKittyKeyEvent = nil
+                    // Strip ESC from paste content. Pasting clipboard text
+                    // containing \e[201~ would otherwise prematurely close
+                    // the bracketed-paste region and the remainder would
+                    // land at the shell as terminal commands -- the
+                    // bracketed-paste injection vector. Match xterm/iTerm2
+                    // by stripping ESC entirely.
+                    let sanitized = (str as String).replacingOccurrences(of: "\u{1B}", with: "")
                     send(data: EscapeSequences.bracketedPasteStart[0...])
-                    send (txt: str as String)
+                    send (txt: sanitized)
                     send(data: EscapeSequences.bracketedPasteEnd[0...])
                     return
                 }
@@ -1200,11 +1207,14 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
                 return
             }
             if isPaste, terminal.bracketedPasteMode {
+                // Same bracketed-paste injection mitigation as the kitty
+                // path above.
+                let sanitized = (str as String).replacingOccurrences(of: "\u{1B}", with: "")
                 send(data: EscapeSequences.bracketedPasteStart[0...])
-            }
-            send (txt: str as String)
-            if isPaste, terminal.bracketedPasteMode {
+                send (txt: sanitized)
                 send(data: EscapeSequences.bracketedPasteEnd[0...])
+            } else {
+                send (txt: str as String)
             }
         }
         // TODO: I do not think we actually need this needsDisplay, the data fed should bubble this up

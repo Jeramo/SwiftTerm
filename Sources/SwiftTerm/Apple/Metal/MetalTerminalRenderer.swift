@@ -1393,15 +1393,12 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     }
 
     private func glyphEntry(for font: CTFont, glyph: CGGlyph) -> GlyphEntry? {
-        // Glyph cache disabled — every cell re-rasterizes its glyph and
-        // re-writes it into the atlas every frame. This is a debugging
-        // experiment to confirm whether duplicate-row artifacts come
-        // from a renderer cache or from the buffer/parser layer below.
-        // Performance will tank (re-rasterizing every visible glyph at
-        // 60Hz is orders of magnitude more work than reusing the atlas
-        // region). To restore: re-add the `if let cached = glyphCache
-        // [key] { return cached }` lookup at the top, and the
-        // `glyphCache[key] = entry` write at the bottom.
+        let key = GlyphKey(fontName: CTFontCopyPostScriptName(font) as String,
+                           size: CTFontGetSize(font),
+                           glyph: glyph)
+        if let cached = glyphCache[key] {
+            return cached
+        }
         guard let bitmap = rasterizer.rasterize(font: font, glyph: glyph) else {
             return nil
         }
@@ -1423,6 +1420,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                bearing: bitmap.bearing,
                                isColor: bitmap.isColor,
                                atlasKind: atlasKind)
+        glyphCache[key] = entry
         return entry
     }
 
@@ -1469,10 +1467,9 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                  baseThicknessPx: baseThicknessPx,
                                  scale: scaleInt,
                                  antiAlias: antiAlias)
-        // Custom-glyph cache also disabled — re-render box drawing /
-        // Powerline / pseudographic glyphs every frame. Same caveat as
-        // glyphEntry above: this is a debugging experiment.
-        _ = key
+        if let cached = customGlyphCache[key] {
+            return cached
+        }
         guard let bitmap = renderCustomGlyphBitmap(codePoint: codePoint,
                                                    cellWidthPx: cellWidthPx,
                                                    cellHeightPx: cellHeightPx,
@@ -1497,6 +1494,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                              height: bitmap.height)
         let entry = CustomGlyphEntry(region: region,
                                      size: CGSize(width: bitmap.width, height: bitmap.height))
+        customGlyphCache[key] = entry
         return entry
     }
 

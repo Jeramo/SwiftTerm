@@ -1715,10 +1715,16 @@ open class Terminal {
                     // Between the time the flag was set, and now `y` might have changed negatively,
                     // in that case, we do not flag any sequence as a hyperlink
                     if hlt.start.row <= buffer.y+buffer.yBase {
-                        for y in hlt.start.row...(buffer.y+buffer.yBase) {
+                        let cursorAbs = buffer.y + buffer.yBase
+                        for y in hlt.start.row...cursorAbs {
                             let line = buffer.lines [y]
                             let startCol = y == hlt.start.row ? min (hlt.start.col, cols-1) : 0
-                            let endCol = y == buffer.y ? min (buffer.x, cols-1) : (marginMode ? buffer.marginRight : cols-1)
+                            // Compare absolute rows: `y` and `cursorAbs` are
+                            // both viewport+yBase. Was: `y == buffer.y` which
+                            // is viewport-relative -- fell through to the
+                            // end-of-line branch whenever yBase > 0, tagging
+                            // every empty cell past the link text.
+                            let endCol = y == cursorAbs ? min (buffer.x, cols-1) : (marginMode ? buffer.marginRight : cols-1)
                             if endCol > startCol {
                                 for x in startCol...endCol {
                                     var cd = line [x]

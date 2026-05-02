@@ -162,7 +162,10 @@ class CircularList<T> {
     {
         let c = count > self.count ? self.count : count
         startIndex = startIndex + c
-        self.count -= count
+        // Was: self.count -= count -- wrong when count > self.count, would
+        // drive self.count negative. Use the clamped value `c` so a caller
+        // overshooting the available range still leaves us in a sane state.
+        self.count -= c
     }
 
     func shiftElements (start: Int, count: Int, offset: Int) -> Bool
@@ -384,7 +387,10 @@ internal class CircularBufferLineList {
     {
         let c = count > self.count ? self.count : count
         startIndex = startIndex + c
-        self.count -= count
+        // Was: self.count -= count -- wrong when count > self.count, would
+        // drive self.count negative. Use the clamped value `c` so a caller
+        // overshooting the available range still leaves us in a sane state.
+        self.count -= c
     }
 
     func shiftElements (start: Int, count: Int, offset: Int) -> Bool

@@ -1657,6 +1657,64 @@ extension TerminalView {
 #endif
     }
     
+#if canImport(MetalKit)
+    /// Translate the parser's viewport-relative dirty range to absolute
+    /// buffer rows and **merge** with whatever's still pending in
+    /// `metalDirtyRange` from a previous update that hasn't drawn yet.
+    /// The merge is critical: queuePendingDisplay throttles
+    /// `updateDisplay` to ~60Hz, but `requestMetalDisplay` only marks
+    /// MTKView as needsDisplay — the actual draw fires on the display
+    /// link. When two updateDisplay cycles run between draws (common
+    /// during tmux/Claude Code redraws that mutate non-adjacent rows),
+    /// the second one used to clobber the first's dirty range, leaving
+    /// the first set of mutated rows displaying their cached pre-mutation
+    /// state until something else (scroll, resize, signature change)
+    /// invalidated the cache. Visible as duplicated/stale spinner lines
+    /// in tmux that disappear on scroll.
+    private func mergeMetalDirtyForUpdate(rowStart: Int, rowEnd: Int) {
+        let buffer = terminal.displayBuffer
+        guard buffer.lines.count > 0 else {
+            metalDirtyRange = nil
+            return
+        }
+        let maxRow = buffer.lines.count - 1
+        let visibleStart = buffer.yDisp
+        let visibleEnd = min(maxRow, buffer.yDisp + buffer.rows - 1)
+
+        let candidate: ClosedRange<Int>?
+        if rowStart >= 0 && rowEnd >= rowStart && rowEnd < terminal.rows {
+            let absStart = buffer.yDisp + rowStart
+            let absEnd = buffer.yDisp + rowEnd
+            let clampedStart = max(0, min(absStart, maxRow))
+            let clampedEnd = max(0, min(absEnd, maxRow))
+            if clampedStart <= clampedEnd {
+                candidate = clampedStart...clampedEnd
+            } else if visibleStart <= visibleEnd {
+                candidate = visibleStart...visibleEnd
+            } else {
+                candidate = nil
+            }
+        } else if visibleStart <= visibleEnd {
+            candidate = visibleStart...visibleEnd
+        } else {
+            candidate = nil
+        }
+
+        guard let candidate else {
+            // No usable range from this update; preserve the existing
+            // pending range so a prior update isn't dropped.
+            return
+        }
+        if let existing = metalDirtyRange {
+            let lower = min(existing.lowerBound, candidate.lowerBound)
+            let upper = max(existing.upperBound, candidate.upperBound)
+            metalDirtyRange = lower...upper
+        } else {
+            metalDirtyRange = candidate
+        }
+    }
+#endif
+
     /// Update visible area
     func updateDisplay (notifyAccessibility: Bool)
     {
@@ -1692,31 +1750,7 @@ extension TerminalView {
         }
 #if canImport(MetalKit)
         if metalView != nil {
-            let buffer = terminal.displayBuffer
-            if buffer.lines.count == 0 {
-                metalDirtyRange = nil
-            } else {
-                let maxRow = buffer.lines.count - 1
-                let visibleStart = buffer.yDisp
-                let visibleEnd = min(maxRow, buffer.yDisp + buffer.rows - 1)
-                if rowStart >= 0 && rowEnd >= rowStart && rowEnd < terminal.rows {
-                    let absStart = buffer.yDisp + rowStart
-                    let absEnd = buffer.yDisp + rowEnd
-                    let clampedStart = max(0, min(absStart, maxRow))
-                    let clampedEnd = max(0, min(absEnd, maxRow))
-                    if clampedStart <= clampedEnd {
-                        metalDirtyRange = clampedStart...clampedEnd
-                    } else if visibleStart <= visibleEnd {
-                        metalDirtyRange = visibleStart...visibleEnd
-                    } else {
-                        metalDirtyRange = nil
-                    }
-                } else if visibleStart <= visibleEnd {
-                    metalDirtyRange = visibleStart...visibleEnd
-                } else {
-                    metalDirtyRange = nil
-                }
-            }
+            mergeMetalDirtyForUpdate(rowStart: rowStart, rowEnd: rowEnd)
             requestMetalDisplay()
         } else {
             setNeedsDisplay(region)
@@ -1734,31 +1768,7 @@ extension TerminalView {
             // update, defeating the cache during high-frequency output
             // (tmux status bars, Claude Code streaming, etc.). Mirrors the
             // macOS branch above.
-            let buffer = terminal.displayBuffer
-            if buffer.lines.count == 0 {
-                metalDirtyRange = nil
-            } else {
-                let maxRow = buffer.lines.count - 1
-                let visibleStart = buffer.yDisp
-                let visibleEnd = min(maxRow, buffer.yDisp + buffer.rows - 1)
-                if rowStart >= 0 && rowEnd >= rowStart && rowEnd < terminal.rows {
-                    let absStart = buffer.yDisp + rowStart
-                    let absEnd = buffer.yDisp + rowEnd
-                    let clampedStart = max(0, min(absStart, maxRow))
-                    let clampedEnd = max(0, min(absEnd, maxRow))
-                    if clampedStart <= clampedEnd {
-                        metalDirtyRange = clampedStart...clampedEnd
-                    } else if visibleStart <= visibleEnd {
-                        metalDirtyRange = visibleStart...visibleEnd
-                    } else {
-                        metalDirtyRange = nil
-                    }
-                } else if visibleStart <= visibleEnd {
-                    metalDirtyRange = visibleStart...visibleEnd
-                } else {
-                    metalDirtyRange = nil
-                }
-            }
+            mergeMetalDirtyForUpdate(rowStart: rowStart, rowEnd: rowEnd)
             requestMetalDisplay()
         } else {
             setNeedsDisplay(bounds)

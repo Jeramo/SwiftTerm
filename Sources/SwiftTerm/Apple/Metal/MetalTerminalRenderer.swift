@@ -657,66 +657,23 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             _ = needsFullRebuild
             _ = rebuildRange
             _ = entry?.data
-            let rowBuffers: RowDrawBuffers?
-            let rowData: RowDrawData
-            if needsRebuild {
-                rowData = buildRowDrawData(row: row,
-                                           buffer: buffer,
-                                           yDisp: visibleDisp,
-                                           cellWidth: cellWidth,
-                                           cellHeight: cellHeight,
-                                           yOffset: yOffset,
-                                           viewWidthPx: viewWidthPx,
-                                           scale: scale,
-                                           virtualPlacementsByImageId: virtualPlacementsByImageId)
-                let buffers = bufferingMode == .perRowPersistent ? makeRowBuffers(from: rowData) : nil
-                entry = RowCacheEntry(data: rowData, buffers: buffers)
-                rowCache[row] = entry
-                rowBuffers = buffers
-                rebuiltRows += 1
-            } else if let cached = entry {
-                rowData = cached.data ?? buildRowDrawData(row: row,
-                                                          buffer: buffer,
-                                                          yDisp: visibleDisp,
-                                                          cellWidth: cellWidth,
-                                                          cellHeight: cellHeight,
-                                                          yOffset: yOffset,
-                                                          viewWidthPx: viewWidthPx,
-                                                          scale: scale,
-                                                          virtualPlacementsByImageId: virtualPlacementsByImageId)
-                if cached.data == nil {
-                    entry = RowCacheEntry(data: rowData, buffers: cached.buffers)
-                    rowCache[row] = entry
-                }
-                if bufferingMode == .perRowPersistent {
-                    if let buffers = cached.buffers {
-                        rowBuffers = buffers
-                    } else {
-                        let buffers = makeRowBuffers(from: rowData)
-                        entry?.buffers = buffers
-                        rowCache[row] = entry
-                        rowBuffers = buffers
-                    }
-                } else {
-                    rowBuffers = nil
-                }
-                cachedRows += 1
-            } else {
-                rowData = buildRowDrawData(row: row,
-                                           buffer: buffer,
-                                           yDisp: visibleDisp,
-                                           cellWidth: cellWidth,
-                                           cellHeight: cellHeight,
-                                           yOffset: yOffset,
-                                           viewWidthPx: viewWidthPx,
-                                           scale: scale,
-                                           virtualPlacementsByImageId: virtualPlacementsByImageId)
-                let buffers = bufferingMode == .perRowPersistent ? makeRowBuffers(from: rowData) : nil
-                entry = RowCacheEntry(data: rowData, buffers: buffers)
-                rowCache[row] = entry
-                rowBuffers = buffers
-                rebuiltRows += 1
-            }
+            // Row cache fully off — always rebuild and never write back
+            // to rowCache. Original branch tree (rebuild / cache-hit /
+            // no-entry) collapsed to one rebuild path.
+            let rowData: RowDrawData = buildRowDrawData(
+                row: row,
+                buffer: buffer,
+                yDisp: visibleDisp,
+                cellWidth: cellWidth,
+                cellHeight: cellHeight,
+                yOffset: yOffset,
+                viewWidthPx: viewWidthPx,
+                scale: scale,
+                virtualPlacementsByImageId: virtualPlacementsByImageId
+            )
+            let rowBuffers: RowDrawBuffers? =
+                bufferingMode == .perRowPersistent ? makeRowBuffers(from: rowData) : nil
+            rebuiltRows += 1
             if let rowBuffers {
                 rows.append(rowBuffers)
             }
@@ -1427,14 +1384,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     }
 
     private func scaledFontFor(font: CTFont, scale: CGFloat) -> CTFont {
-        let key = GlyphKey(fontName: CTFontCopyPostScriptName(font) as String,
-                           size: CTFontGetSize(font) * scale,
-                           glyph: 0)
-        if let cached = scaledFontCache[key] {
-            return cached
-        }
+        // Scaled-font cache disabled — recreate the scaled CTFont
+        // every call. Apple's CoreText caches font objects internally,
+        // so the cost should mostly be the CTFontCreateCopy bookkeeping.
         let scaled = CTFontCreateCopyWithAttributes(font, CTFontGetSize(font) * scale, nil, nil)
-        scaledFontCache[key] = scaled
         return scaled
     }
 
@@ -1758,12 +1711,14 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             guard !text.isEmpty else {
                 return nil
             }
+            // Cache disabled — re-shape every text run every call.
+            // CoreText shaping is the slowest part of the build path
+            // (ligature resolution, font fallback, BiDi); leaving this
+            // off is the most expensive of the cache disablings.
             let key = ShaperKey(fontName: CTFontCopyPostScriptName(font) as String,
                                 fontSize: CTFontGetSize(font),
                                 text: text)
-            if let cached = cache[key] {
-                return cached
-            }
+            _ = key
 
             let attributedString = NSAttributedString(string: text, attributes: [.font: font])
             let line = CTLineCreateWithAttributedString(attributedString)
@@ -1806,7 +1761,8 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                    positions: positions,
                                    glyphCount: positions.count,
                                    firstX: firstX)
-            insert(key: key, run: result)
+            // Cache disabled — skip insertion so the next call to
+            // `shape` re-runs CoreText shaping from scratch.
             return result
         }
 
@@ -2224,9 +2180,10 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     }
 
     private func texture(for image: TerminalView.AppleImage) -> MTLTexture? {
-        if let cached = imageTextureCache.object(forKey: image) {
-            return cached
-        }
+        // Image-texture cache disabled — re-upload every TerminalView
+        // image to a Metal texture every call. Was: weak-keyed cache
+        // returning the previously-uploaded MTLTexture for the same
+        // AppleImage instance.
         var texture: MTLTexture?
         if let cgImage = cgImage(from: image.image) {
             texture = try? textureLoader.newTexture(cgImage: cgImage, options: textureOptions())
@@ -2240,9 +2197,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             texture = try? textureLoader.newTexture(data: data, options: textureOptions())
         }
         #endif
-        if let texture {
-            imageTextureCache.setObject(texture, forKey: image)
-        } else {
+        if texture == nil {
 #if DEBUG
             let key = ObjectIdentifier(image)
             if !imageTextureFailures.contains(key) {
@@ -2259,10 +2214,11 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
               let kittyImage = terminalView.terminal.kittyGraphicsState.imagesById[imageId] else {
             return nil
         }
-        let signature = kittySignature(for: kittyImage.payload)
-        if let cached = kittyTextureCache[imageId], cached.signature == signature {
-            return cached.texture
-        }
+        // Kitty texture cache disabled — re-decode and re-upload the
+        // image every frame. Decoding a PNG and creating a Metal texture
+        // every frame is REALLY expensive for any non-trivial image; this
+        // only matters for sessions actually using Kitty graphics protocol.
+        let _ = kittySignature(for: kittyImage.payload)
         let texture: MTLTexture?
         switch kittyImage.payload {
         case .png(let data):
@@ -2270,9 +2226,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         case .rgba(let bytes, let width, let height):
             texture = textureFromRGBA(bytes: bytes, width: width, height: height)
         }
-        if let texture {
-            kittyTextureCache[imageId] = (signature, texture)
-        } else {
+        if texture == nil {
 #if DEBUG
             if !kittyTextureFailures.contains(imageId) {
                 kittyTextureFailures.insert(imageId)

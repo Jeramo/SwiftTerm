@@ -1733,6 +1733,16 @@ open class Terminal {
                                 }
                             }
                         }
+                        // Mark the touched rows dirty so the renderer
+                        // repaints with the hyperlink decoration. Same bug
+                        // class as cmdEraseChars / DECIC / REP -- payloads
+                        // were being written but the dirty-range tracker
+                        // never saw them, so the OSC 8 underline/color
+                        // wouldn't appear until something else dirtied
+                        // the row.
+                        let firstViewportY = hlt.start.row - buffer.yBase
+                        let lastViewportY = cursorAbs - buffer.yBase
+                        updateRange (startLine: firstViewportY, endLine: lastViewportY)
                     }
                 }
             }

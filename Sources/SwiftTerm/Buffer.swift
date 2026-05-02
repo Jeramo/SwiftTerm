@@ -513,13 +513,23 @@ public final class Buffer {
             }
         }
         
-        // DEBUG: Post-condition
+        // DEBUG: Post-condition. Comment said DEBUG but the abort() ran in
+        // release builds — a buffer line whose width drifted from newCols
+        // (any reflow edge case, any future regression) crashed the entire
+        // app on resize. Sister sanity checks in this file (yDisp/x/y/
+        // scrollBottom setters) wrap their abort() in #if DEBUG / return.
+        // Mirror that: in DEBUG, fail loud; in release, recover by resizing
+        // the line up to newCols rather than killing the user's session.
         if lines.count > 0 {
             for i in 0..<lines.maxLength {
                 let line = lines [i]
                 if line.count < newCols {
+                    #if DEBUG
                     print ("stop here newCols=\(newCols) but the element has: \(line.count)")
                     abort ()
+                    #else
+                    line.resize (cols: newCols, fillData: CharData.Null)
+                    #endif
                 }
             }
         }

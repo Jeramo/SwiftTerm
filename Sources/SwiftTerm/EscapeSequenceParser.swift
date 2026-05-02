@@ -145,7 +145,21 @@ public class EscapeSequenceParser {
     /// rather than being cleanly dropped. 256 is high enough that no
     /// legitimate sequence reaches it.
     static let maxParameters = 256
-    
+
+    /// Cap on OSC / APC payload size (bytes). Without a cap, a malicious or
+    /// buggy server can send `\e]` followed by megabytes of printable bytes
+    /// with no BEL/ESC/CAN terminator, growing the parser's `osc` buffer
+    /// across parse() calls until the app OOMs. 1 MiB is generous enough
+    /// to admit iTerm2 OSC 1337 inline images (base64 image data) while
+    /// bounding the worst case. Excess bytes are silently dropped; the
+    /// existing terminator scan still runs so the OSC eventually closes.
+    static let maxOscPayload = 1024 * 1024
+
+    /// Cap on CSI / DCS intermediate-byte (`collect`) length. Real
+    /// sequences use 0–2 intermediates (xterm's NPARAM analogue). 16 is
+    /// well above any legitimate use; excess intermediates are dropped.
+    static let maxCollect = 16
+
     static func r (low: UInt8, high: UInt8) -> [UInt8]
     {
         let c = high-low
@@ -780,7 +794,9 @@ public class EscapeSequenceParser {
             case .escDispatch:
                 dispatchEsc(collect: collect, code: code)
             case .collect:
-                collect.append (code)
+                if collect.count < EscapeSequenceParser.maxCollect {
+                    collect.append (code)
+                }
             case .clear:
                 if ~print != 0 {
                     printHandler (data [print..<i])
@@ -837,9 +853,13 @@ public class EscapeSequenceParser {
                         break
                     } else if c >= 0x20 {
                         if currentState == .apcString {
-                            apc.append (c)
+                            if apc.count < EscapeSequenceParser.maxOscPayload {
+                                apc.append (c)
+                            }
                         } else {
-                            osc.append (c)
+                            if osc.count < EscapeSequenceParser.maxOscPayload {
+                                osc.append (c)
+                            }
                         }
                     }
                     j += 1

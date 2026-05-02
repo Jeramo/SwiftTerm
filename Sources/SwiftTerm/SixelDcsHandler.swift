@@ -125,7 +125,18 @@ class SixelDcsHandler : DcsHandler {
                 break
             }
         }
-        
+
+        // sizePixels only updates maxX on `$` (CR) or `-` (LF). A Sixel
+        // stream that ends mid-line without one of those terminators
+        // (malformed/truncated input from a buggy or hostile server) would
+        // leave maxX at 0 -- the allocation below would yield an empty
+        // pixels array and the second pass's pixels[s] write would trap.
+        // Capture the trailing line's x.
+        maxX = max(maxX, x)
+        if maxX <= 0 || maxY <= 0 {
+            return
+        }
+
         // Allocate the buffer, and parse again, this time
         // plotting the data into the pixels buffer
         pixels = Array.init(repeating: 0, count: maxX*maxY*4)

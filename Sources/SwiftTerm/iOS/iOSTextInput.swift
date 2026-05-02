@@ -62,9 +62,12 @@ import CoreGraphics
 /// UITextInput Log capability
 @inline(__always)
 internal func uitiLog (_ message: @autoclosure () -> String) {
-    guard TerminalView.textInputDebugEnabled else { return }
+    let sink = TerminalView.textInputDebugSink
+    guard TerminalView.textInputDebugEnabled || sink != nil else { return }
     TerminalView.textInputLogCounter += 1
-    print ("UITextInput[\(TerminalView.textInputLogCounter)]: \(message())")
+    let line = "UITextInput[\(TerminalView.textInputLogCounter)]: \(message())"
+    if TerminalView.textInputDebugEnabled { print(line) }
+    sink?(line)
 }
 
 extension TerminalView: UITextInput {    

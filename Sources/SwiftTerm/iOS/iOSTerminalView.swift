@@ -53,6 +53,11 @@ public extension Notification.Name {
  */
 open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate, TerminalDelegate, UIPointerInteractionDelegate {
     public static var textInputDebugEnabled: Bool = ProcessInfo.processInfo.environment["SWIFTTERM_TEXT_INPUT_DEBUG"] == "1"
+    /// Optional forwarder for UITextInput debug events. When set, every uitiLog
+    /// line and `send(...)` event is also handed to this closure (in addition
+    /// to `print`). Pling installs this to append events to a shared-app-group
+    /// log file so a TestFlight build can be diagnosed without Xcode.
+    public static var textInputDebugSink: ((String) -> Void)?
     internal static var textInputLogCounter: Int = 0
 
     struct FontSet {

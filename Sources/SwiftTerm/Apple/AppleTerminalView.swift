@@ -2052,24 +2052,30 @@ extension TerminalView {
     {
         ensureCaretIsVisible ()
         #if os(iOS) || os(visionOS)
-        if TerminalView.textInputDebugEnabled {
+        let sink = TerminalView.textInputDebugSink
+        if TerminalView.textInputDebugEnabled || sink != nil {
             let previewBytes = data.prefix(32).map { String(format: "%02X", $0) }.joined(separator: " ")
-            print("UITextInput[\(TerminalView.textInputLogCounter + 1)]: send bytes=\(data.count) [\(previewBytes)]")
             TerminalView.textInputLogCounter += 1
+            let line = "UITextInput[\(TerminalView.textInputLogCounter)]: send bytes=\(data.count) [\(previewBytes)]"
+            if TerminalView.textInputDebugEnabled { print(line) }
+            sink?(line)
         }
         #endif
         terminalDelegate?.send (source: self, data: data)
     }
-    
+
     /**
      * Sends the specified string encoded at utf8 to the program running under the terminal emulator
      * - Parameter txt: the string to send to the client
      */
     public func send (txt: String) {
         #if os(iOS) || os(visionOS)
-        if TerminalView.textInputDebugEnabled {
-            print("UITextInput[\(TerminalView.textInputLogCounter + 1)]: send txt=\(txt.debugDescription)")
+        let sink = TerminalView.textInputDebugSink
+        if TerminalView.textInputDebugEnabled || sink != nil {
             TerminalView.textInputLogCounter += 1
+            let line = "UITextInput[\(TerminalView.textInputLogCounter)]: send txt=\(txt.debugDescription)"
+            if TerminalView.textInputDebugEnabled { print(line) }
+            sink?(line)
         }
         #endif
         let array = [UInt8] (txt.utf8)

@@ -645,10 +645,18 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         var cachedRows = 0
         for row in visibleRange {
             var entry = rowCache[row]
-            let needsRebuild = needsFullRebuild ||
-                (rebuildRange?.contains(row) ?? false) ||
-                entry == nil ||
-                (bufferingMode == .perFrameAggregated && entry?.data == nil)
+            // Cache disabled — rebuild every visible row every frame.
+            // The per-row cache traded CPU/battery for invalidation
+            // complexity (see metalDirtyRange merge fix in
+            // AppleTerminalView.updateDisplay). Trying full rebuild to
+            // see if the simpler invariant is fast enough on real
+            // hardware — if scrolling/streaming feels heavy, restore
+            // the original `needsFullRebuild || rebuildRange.contains
+            // || entry == nil` guard.
+            let needsRebuild = true
+            _ = needsFullRebuild
+            _ = rebuildRange
+            _ = entry?.data
             let rowBuffers: RowDrawBuffers?
             let rowData: RowDrawData
             if needsRebuild {

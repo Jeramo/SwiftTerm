@@ -5740,7 +5740,13 @@ open class Terminal {
         //print ("got \(mouseProtocol)")
         switch mouseProtocol {
         case .x10:
-            sendResponse(cc.CSI, "M", [UInt8(buttonFlags+32), min (UInt8(255), UInt8(32 + x+1)), min (UInt8(255), UInt8(32+y+1))])
+            // UInt8(clamping:) saturates at 0/255 instead of trapping. The
+            // previous form `UInt8(32 + x + 1)` ran the trapping init *first*
+            // and only then min'd against 255, so a column or row > 222
+            // crashed -- reachable on iPad landscape with small fonts.
+            sendResponse(cc.CSI, "M", [UInt8(clamping: buttonFlags + 32),
+                                       UInt8(clamping: 32 + x + 1),
+                                       UInt8(clamping: 32 + y + 1)])
         case .sgr:
             let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
             let m = ((buttonFlags & 3) == 3) ? "m" : "M"
@@ -5748,7 +5754,6 @@ open class Terminal {
         case .sgrPixel:
             let bflags : Int = ((buttonFlags & 3) == 3) ? (buttonFlags & ~3) : buttonFlags
             let m = ((buttonFlags & 3) == 3) ? "m" : "M"
-            print ("\(pixelX);\(pixelY)")
             sendResponse(cc.CSI, "<\(bflags);\(pixelX);\(pixelY)\(m)")
             
         case .urxvt:

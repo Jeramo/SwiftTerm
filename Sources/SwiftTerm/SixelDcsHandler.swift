@@ -32,19 +32,33 @@ class SixelDcsHandler : DcsHandler {
     
     private func nextInt(_ p: inout Int) -> Int? {
         var result: Int?
+        var overflowed = false
         while p < data.count {
             let c = data[p]
             guard c >= 48 && c <= 57 else {
                 return result
             }
-            
-            let digit = Int(c) - 48
-            if let existing = result {
-                result = 10 * existing + digit
-            } else {
-                result = digit
+
+            if !overflowed {
+                let digit = Int(c) - 48
+                if let existing = result {
+                    // Use Swift's overflow-reporting arithmetic so a
+                    // malformed or malicious Sixel stream with a 19+ digit
+                    // numeric value can't crash the renderer via Int trap.
+                    // Once we saturate, keep consuming digits so the parser
+                    // position advances past the token; result stays clamped.
+                    let (mul, mulOverflow) = existing.multipliedReportingOverflow(by: 10)
+                    let (sum, addOverflow) = mul.addingReportingOverflow(digit)
+                    if mulOverflow || addOverflow {
+                        overflowed = true
+                    } else {
+                        result = sum
+                    }
+                } else {
+                    result = digit
+                }
             }
-            
+
             p += 1
         }
         return nil

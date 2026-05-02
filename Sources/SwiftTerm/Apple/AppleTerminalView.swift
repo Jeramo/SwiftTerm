@@ -1725,11 +1725,40 @@ extension TerminalView {
         setNeedsDisplay(region)
 #endif
         #else
-        // TODO iOS: need to update the code above, but will do that when I get some real
-        // life data being fed into it.
         #if canImport(MetalKit)
         if metalView != nil {
-            metalDirtyRange = metalVisibleRange()
+            // Translate the parser's viewport-relative dirty range to
+            // absolute buffer rows so the Metal renderer's per-row cache
+            // can actually skip unchanged rows. Was: blanket
+            // `metalVisibleRange()` which forced a full rebuild on every
+            // update, defeating the cache during high-frequency output
+            // (tmux status bars, Claude Code streaming, etc.). Mirrors the
+            // macOS branch above.
+            let buffer = terminal.displayBuffer
+            if buffer.lines.count == 0 {
+                metalDirtyRange = nil
+            } else {
+                let maxRow = buffer.lines.count - 1
+                let visibleStart = buffer.yDisp
+                let visibleEnd = min(maxRow, buffer.yDisp + buffer.rows - 1)
+                if rowStart >= 0 && rowEnd >= rowStart && rowEnd < terminal.rows {
+                    let absStart = buffer.yDisp + rowStart
+                    let absEnd = buffer.yDisp + rowEnd
+                    let clampedStart = max(0, min(absStart, maxRow))
+                    let clampedEnd = max(0, min(absEnd, maxRow))
+                    if clampedStart <= clampedEnd {
+                        metalDirtyRange = clampedStart...clampedEnd
+                    } else if visibleStart <= visibleEnd {
+                        metalDirtyRange = visibleStart...visibleEnd
+                    } else {
+                        metalDirtyRange = nil
+                    }
+                } else if visibleStart <= visibleEnd {
+                    metalDirtyRange = visibleStart...visibleEnd
+                } else {
+                    metalDirtyRange = nil
+                }
+            }
             requestMetalDisplay()
         } else {
             setNeedsDisplay(bounds)

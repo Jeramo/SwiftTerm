@@ -133,10 +133,18 @@ public class EscapeSequenceParser {
     private static let profileEnabled = ProcessInfo.processInfo.environment["SWIFTTERM_PROFILE"] == "1"
 #endif
 
-    /// Upper bound on CSI parameter list length. Mirrors xterm's NPARAM.
-    /// Caps memory and CPU when a peer (or fuzzer) sends a sequence with
-    /// thousands of separators, which would otherwise grow `pars` unbounded.
-    static let maxParameters = 32
+    /// Upper bound on CSI parameter list length. Originally set to 32
+    /// (matching the legacy xterm NPARAM) but raised to 256 to match modern
+    /// xterm and give modern TUIs (Claude Code, kitty's extended underline
+    /// notation, complex SGR sequences) plenty of headroom. Still finite
+    /// enough to cap memory and CPU under a separator-spam attack.
+    ///
+    /// Note: when this cap is reached, additional `;`/`:` separators are
+    /// ignored, but digit-accumulation still writes to the LAST pars entry,
+    /// so any params beyond the cap concatenate digits into pars[max-1]
+    /// rather than being cleanly dropped. 256 is high enough that no
+    /// legitimate sequence reaches it.
+    static let maxParameters = 256
     
     static func r (low: UInt8, high: UInt8) -> [UInt8]
     {

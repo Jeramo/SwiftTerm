@@ -137,43 +137,40 @@ extension TerminalView: UITextInput {
         guard let r = range as? TextRange else { return }
 
         guard _markedTextRange == nil else { return }
-        uitiLog ("replace(range:\(r), withText:\(text.debugDescription)) [send-suppressed] \(textInputStateDescription())")
+        uitiLog ("replace(range:\(r), withText:\(text.debugDescription)) \(textInputStateDescription())")
 
-        // iOS calls replace() for post-commit autocorrect / swipe-typing
-        // refinement: "the chars I just told you to insert? actually I meant
-        // these other chars". The naive implementation deletes the old text
-        // by sending oldText.count backspace bytes (0x7F) and then writes
-        // the replacement. That works in a cooked-mode shell but corrupts
-        // the screen in TUIs (Claude Code, vim, htop, anything in raw mode)
-        // because 0x7F is not interpreted as 1:1 character rubout there —
-        // it's just a key event the program may handle however it likes,
-        // or pass through unchanged into the rendered output. Over Mosh,
-        // the resulting redraw collides with the in-flight diff and
-        // produces visible garbled lines.
-        //
-        // We can't reliably tell whether the remote is cooked or raw, so we
-        // err on the side of not corrupting the screen: keep our internal
-        // UITextInput buffer in sync with what iOS thinks happened, but
-        // never propagate the rewrite to the remote. The user's original
-        // typed text stays on screen; if they wanted the autocorrected
-        // word they can retype it.
         beginTextInputEdit()
 
+        // Send the edits to the terminal
+        // Delete the old by sending as many backspaces as needed
+        let oldText = textInputStorage[r.fullRange(in: textInputStorage)]
+        if !isAutoPeriodReplacement(text) {
+            pendingAutoPeriodDeleteWasSpace = false
+        }
+        var replacementText = text
+        if let normalized = normalizedAutoPeriodReplacementText(text, oldText: oldText, rangeToReplace: r) {
+            replacementText = normalized
+        }
+        let backspaces = oldText.count
+        for _ in 0..<backspaces {
+            self.send ([0x7f])
+        }
+        self.send (txt: replacementText)
+
         let insertionIndex = r.startPosition.offset
-        textInputStorage.replaceSubrange(r.fullRange(in: textInputStorage), with: text)
+        textInputStorage.replaceSubrange(r.fullRange(in: textInputStorage), with: replacementText)
         if r.endPosition.offset <= _selectedTextRange.startPosition.offset {
             let selectionOffset = _selectedTextRange.startPosition.offset - insertionIndex
-            let newSelectionOffset = selectionOffset - r.length + text.count
+            let newSelectionOffset = selectionOffset - r.length + replacementText.count
             let newSelectionIndex = newSelectionOffset + insertionIndex
-            _selectedTextRange = TextRange(from: TextPosition(offset:newSelectionIndex),
+            _selectedTextRange = TextRange(from: TextPosition(offset:newSelectionIndex), 
                                             to: TextPosition(offset: newSelectionIndex + _selectedTextRange.length))
         } else if r.startPosition.offset >= _selectedTextRange.endPosition.offset {
             // NOOP
         } else {
-            let insertionEndPosition = TextPosition(offset:insertionIndex + text.count)
+            let insertionEndPosition = TextPosition(offset:insertionIndex + replacementText.count)            
             _selectedTextRange = TextRange(from: insertionEndPosition,  to: insertionEndPosition)
         }
-        pendingAutoPeriodDeleteWasSpace = false
 
         endTextInputEdit()
     }

@@ -106,10 +106,23 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     {
         repeatKey ()
         repeatCommand = repeatKey
-        
+
+        // Make sure no prior repeat timer is left running before we start a
+        // new chain. Without this, two rapid-fire presses can stack timers
+        // (the first press's task wakes up after the second press has
+        // already overwritten self.repeatTimer, and our old check looked at
+        // self.repeatTask -- which now points at the *new* task and so
+        // appears not-cancelled).
+        repeatTimer?.invalidate()
+        repeatTimer = nil
+
         repeatTask = Task {
             try? await Task.sleep(nanoseconds: 600_000_000)
-            guard !(repeatTask?.isCancelled ?? true) else { return }
+            // Check the *current* task's cancellation, not self.repeatTask
+            // (which may already point at a newer Task spawned by a
+            // subsequent press). Was: `repeatTask?.isCancelled` -- could
+            // schedule an orphan Timer that auto-repeats indefinitely.
+            guard !Task.isCancelled else { return }
             let rc = self.repeatCommand
             self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
                 rc? ()

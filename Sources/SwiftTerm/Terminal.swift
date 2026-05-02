@@ -6619,10 +6619,16 @@ open class Terminal {
         case .before:
             break
         }
-        if start.row < 0 || start.row > b.lines.count {
+        // Valid rows are 0..count-1; using `>` instead of `>=` let
+        // start.row == count slip through and reach buf.lines[count] below,
+        // which on a full circular buffer wraps back to the oldest line and
+        // on a non-full one calls makeEmpty -- either way the selection
+        // includes a line that doesn't exist. End-row check below uses `>=`;
+        // tightened start to match.
+        if start.row < 0 || start.row >= b.lines.count {
             return []
         }
-        
+
         if end.row >= b.lines.count {
             end.row = b.lines.count-1
         }

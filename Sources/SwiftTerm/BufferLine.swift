@@ -215,7 +215,7 @@ public final class BufferLine: CustomDebugStringConvertible {
 
         if cols > len {
             let newBuf = UnsafeMutableBufferPointer<CharData>.allocate(capacity: cols)
-            
+
             // Copy existing data
 #if os(Linux) || os(Windows)
             if len > 0 {
@@ -228,11 +228,16 @@ public final class BufferLine: CustomDebugStringConvertible {
                 _ = newBuf.initialize(fromContentsOf: data[0..<len])
             }
 #endif
-            
+
             // Fill remainder with fillData
             for i in len..<cols {
                 newBuf.initializeElement(at: i, to: fillData)
             }
+            // Deinitialize before deallocate -- the shrink path below already
+            // does this. UnsafeMutableBufferPointer.deallocate() requires the
+            // memory to be deinitialized first per its documented contract,
+            // even for value types like CharData where it's a runtime no-op.
+            data.deinitialize()
             data.deallocate()
             data = newBuf
             dataSize = cols

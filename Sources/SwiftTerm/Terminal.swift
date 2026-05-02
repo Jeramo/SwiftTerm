@@ -4726,7 +4726,11 @@ open class Terminal {
     //
     func cmdScrollUp (_ pars: [Int], _ collect: cstring)
     {
-        let p = min (rows*2, max (pars.count == 0 ? 1 : pars [0], 1))
+        // Cap at `rows` to match cmdScrollDown. Once the scroll region has
+        // been scrolled by `rows` lines it's already fully blank; further
+        // iterations are pure splice/copy waste. Was `rows*2` -- doubled
+        // the worst-case work for a `\e[NS` with N >> rows.
+        let p = min (rows, max (pars.count == 0 ? 1 : pars [0], 1))
         let da = eraseAttr ()
 
         if marginMode {

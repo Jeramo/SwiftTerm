@@ -4675,6 +4675,14 @@ open class Terminal {
             start: buffer.x,
             end: buffer.x + p,
             fillData: CharData (attribute:  eraseAttr ()))
+        // Mark the line dirty so the renderer repaints the erased cells.
+        // Was missing here but present in cmdInsertChars/cmdDeleteChars/
+        // cmdEraseInLine -- without it, ECH (CSI Ps X) clears cells in the
+        // buffer but the on-screen glyphs stay until some other event
+        // dirties the row. Visible as "ghost" text behind a partially
+        // updated frame, e.g. Claude Code's spinner: ECH clears old
+        // animation before writing new frame, but stale glyphs linger.
+        updateRange (buffer.y)
     }
 
     func csiT (_ pars: [Int], _ collect: cstring)

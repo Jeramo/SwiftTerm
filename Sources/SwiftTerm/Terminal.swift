@@ -2725,16 +2725,21 @@ open class Terminal {
              // DECIC - Insert Column
             let n = pars.count > 0 ? max (pars [0],1) : 1
             let buffer = self.buffer
-            
+
             if marginMode && buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight {
                 return
             }
-            
+
             for row in buffer.scrollTop...buffer.scrollBottom {
                 let line = buffer.lines [row+buffer.yBase]
                 line.insertCells(pos: buffer.x, n: n, rightMargin: marginMode ? buffer.marginRight : cols-1, fillData: buffer.getNullCell())
                 line.isWrapped = false
             }
+            // Mark the affected scroll-region rows dirty -- DECDC has the
+            // same updateRange call after its delete loop. Without this,
+            // insertCells modifies the buffer but the renderer keeps the
+            // pre-insert glyphs on screen.
+            updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
             return
         } else {
             log ("CSI # } not implemented- XTPOPSGR with \(pars)")
@@ -4609,10 +4614,20 @@ open class Terminal {
         let p = min (maxRepeat, max (pars.count == 0 ? 1 : pars [0], 1))
         let line = buffer.lines [buffer.yBase + buffer.y]
         let chData = buffer.x - 1 < 0 ? CharData (attribute: CharData.defaultAttr) : line [buffer.x - 1]
-        
+
+        // Buffer.insertCharacter modifies cells but doesn't call updateRange.
+        // handlePrint covers it for printable input via updateRange(buffer.y)
+        // before/after its loop, but cmdRepeatPrecedingCharacter (CSI Ps b /
+        // REP) was calling insertCharacter without that bracketing -- so a
+        // REP'd run of characters wrote to the buffer but the renderer
+        // didn't repaint the row. Same bug class as cmdEraseChars.
+        let startY = buffer.y
         for _ in 0..<p {
             insertCharacter(chData)
         }
+        // For large p the loop can cross rows via wraparound; cover the
+        // span from start to end.
+        updateRange (startLine: startY, endLine: buffer.y)
     }
 
     //

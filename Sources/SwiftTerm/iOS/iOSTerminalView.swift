@@ -2246,14 +2246,29 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     open override func resignFirstResponder() -> Bool {
         let code = super.resignFirstResponder()
-        
+
         if code {
             terminal.setTerminalFocus(false)
             caretView?.disableAnimations()
             caretView?.updateView()
             keyRepeat?.invalidate()
             keyRepeat = nil
-            
+
+            // Drop tracked CMD-key state when we lose focus. Otherwise a
+            // CMD-still-held -> app-switch leaves activeCommandKeys
+            // populated and commandActive stuck on, since the matching
+            // pressesEnded for the GUI key never reaches us.
+            if !activeCommandKeys.isEmpty {
+                activeCommandKeys.removeAll()
+                commandActive = false
+                lastReportedLink = nil
+                if linkHighlightMode == .hoverWithModifier || linkHighlightMode == .alwaysWithModifier {
+                    let oldRange = linkHighlightRange
+                    linkHighlightRange = nil
+                    invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
+                }
+            }
+
             terminalAccessory?.cancelTimer()
         }
         return code
@@ -2580,6 +2595,45 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
         }
         super.pressesEnded(presses, with: event)
+    }
+
+    public override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        // UIKit calls this instead of pressesEnded when a press chain is
+        // interrupted (system gesture, focus loss, etc.). Without mirroring
+        // the cleanup from pressesEnded, holding CMD and then triggering a
+        // cancellation leaves activeCommandKeys populated and commandActive
+        // stuck on -- visible as persistent link highlighting under
+        // .hoverWithModifier / .alwaysWithModifier modes.
+        keyRepeat?.invalidate()
+        keyRepeat = nil
+        let wasCommandActive = commandActive
+        for press in presses {
+            guard let key = press.key else { continue }
+            switch key.keyCode {
+            case .keyboardLeftGUI, .keyboardRightGUI:
+                activeCommandKeys.remove(key.keyCode)
+            default:
+                break
+            }
+        }
+        commandActive = !activeCommandKeys.isEmpty
+        if !commandActive {
+            lastReportedLink = nil
+            if linkHighlightMode == .hoverWithModifier {
+                let oldRange = linkHighlightRange
+                linkHighlightRange = nil
+                invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
+            }
+        }
+        if commandActive != wasCommandActive {
+            if linkHighlightMode == .alwaysWithModifier {
+                terminal.updateFullScreen()
+            }
+            if linkHighlightMode == .alwaysWithModifier || linkHighlightMode == .hoverWithModifier {
+                queuePendingDisplay()
+            }
+        }
+        super.pressesCancelled(presses, with: event)
     }
     
     var pendingSelectionChanged = false

@@ -132,6 +132,11 @@ public class EscapeSequenceParser {
     private static let profileLog = OSLog(subsystem: "org.tirania.SwiftTerm", category: "ParserProfile")
     private static let profileEnabled = ProcessInfo.processInfo.environment["SWIFTTERM_PROFILE"] == "1"
 #endif
+
+    /// Upper bound on CSI parameter list length. Mirrors xterm's NPARAM.
+    /// Caps memory and CPU when a peer (or fuzzer) sends a sequence with
+    /// thousands of separators, which would otherwise grow `pars` unbounded.
+    static let maxParameters = 32
     
     static func r (low: UInt8, high: UInt8) -> [UInt8]
     {
@@ -668,11 +673,14 @@ public class EscapeSequenceParser {
             
             // shortcut for CSI params
             if currentState == .csiParam && (code > 0x2f && code < 0x3a) {
-                let newV = pars [pars.count - 1] * 10 + Int(code) - 48
-                
-                // Prevent attempts at overflowing - crash 
-                let willOverflow =  newV > ((Int.max/10)-10)
-                pars [pars.count - 1] = willOverflow ? 0 : newV
+                // Check overflow BEFORE multiplying — Swift's `*` on Int traps
+                // on overflow, so a 19+ digit param value would crash the app.
+                let oldV = pars [pars.count - 1]
+                if oldV > (Int.max - 9) / 10 {
+                    pars [pars.count - 1] = 0
+                } else {
+                    pars [pars.count - 1] = oldV * 10 + Int(code) - 48
+                }
                 i += 1
                 continue
             }
@@ -742,14 +750,24 @@ public class EscapeSequenceParser {
                 dispatchCsi(code: code, pars: pars, collect: collect)
             case .param:
                 if code == 0x3b || code == 0x3a {
-                    parsTxt.append(code)
-                    pars.append (0)
+                    // Cap pars growth so a malformed sequence with thousands
+                    // of separators (`\e[1;1;1;...m`) can't blow memory or
+                    // make later dispatch loops O(N) on attacker-controlled N.
+                    // 32 matches xterm's NPARAM; excess separators are ignored.
+                    if pars.count < EscapeSequenceParser.maxParameters {
+                        parsTxt.append(code)
+                        pars.append (0)
+                    }
                 } else {
-                    let newV = pars [pars.count - 1] * 10 + Int(code) - 48
-
-                    // Prevent attempts at overflowing - crash
-                    let willOverflow =  newV > ((Int.max/10)-10)
-                    pars [pars.count - 1] = willOverflow ? 0 : newV
+                    // Check overflow BEFORE multiplying — Swift's `*` on Int
+                    // traps on overflow, so a 19+ digit param value would
+                    // crash the app.
+                    let oldV = pars [pars.count - 1]
+                    if oldV > (Int.max - 9) / 10 {
+                        pars [pars.count - 1] = 0
+                    } else {
+                        pars [pars.count - 1] = oldV * 10 + Int(code) - 48
+                    }
                 }
             case .escDispatch:
                 dispatchEsc(collect: collect, code: code)

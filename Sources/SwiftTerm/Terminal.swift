@@ -1756,18 +1756,29 @@ open class Terminal {
     //    ESC ] 52 ; c ; [base64 data] \a
     // where c is for copy and the only thing supported.
     func oscClipboard (_ data: ArraySlice<UInt8>) {
-        // we require data to start with c; followed by base64 content
-        guard data.count >= 2,
-              data[data.startIndex] == UInt8(ascii: "c"),
-              data[data.startIndex+1] == UInt8(ascii: ";") else {
-            return
+        // OSC 52 ; Pc ; Pd
+        // Pc may be empty, a single char, or several chars from
+        // {c, p, q, s, 0-7}. Empty Pc defaults to s0 per xterm spec.
+        // The previous gate required a literal "c;" prefix and dropped
+        // every spec-compliant variant — neovim's OSC 52 provider with
+        // `clipboard^=unnamedplus` emits empty/multi-target Pc, and a
+        // few tmux configs use "p;" for the primary selection. Those
+        // copies silently never reached the iOS pasteboard.
+        var i = data.startIndex
+        while i < data.endIndex {
+            let b = data[i]
+            let isSelectionChar = b == UInt8(ascii: "c") || b == UInt8(ascii: "p")
+                || b == UInt8(ascii: "q") || b == UInt8(ascii: "s")
+                || (b >= UInt8(ascii: "0") && b <= UInt8(ascii: "7"))
+            if !isSelectionChar { break }
+            i += 1
         }
-        
-        let base64 = Data(data[(data.startIndex+2)...])
-        guard let content = Data(base64Encoded: base64) else {
-            return
-        }
-        
+        guard i < data.endIndex, data[i] == UInt8(ascii: ";") else { return }
+        let base64Start = i + 1
+        // Empty payload (`;`) is allowed by the spec — treat it as a
+        // clipboard clear by passing zero bytes through to the delegate.
+        let base64 = Data(data[base64Start..<data.endIndex])
+        guard let content = Data(base64Encoded: base64) else { return }
         tdel?.clipboardCopy(source: self, content: content)
     }
     

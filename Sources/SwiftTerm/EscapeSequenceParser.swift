@@ -911,13 +911,17 @@ public class EscapeSequenceParser {
             if x < 48 || x > 57 {
                 return result
             }
-            
-            let newV = result * 10 + Int ((x - 48))
-            let willOverflow =  newV > ((Int.max/10)-10)
-            if willOverflow {
+
+            // Check overflow BEFORE multiplying. The previous code computed
+            // `result * 10 + digit` first, which traps on Int overflow in
+            // Swift -- the willOverflow check below was effectively
+            // unreachable. Same shape as the CSI param overflow fixed in
+            // 0042365 and the Sixel parser fix in d28223e. Reachable from
+            // OSC 4 (oscChangeOrQueryColorIndex) and any future caller.
+            if result > (Int.max - 9) / 10 {
                 return 0
             }
-            result = newV
+            result = result * 10 + Int ((x - 48))
         }
         return result
     }

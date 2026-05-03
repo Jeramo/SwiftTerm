@@ -5534,6 +5534,44 @@ open class Terminal {
         refresh (startRow: 0, endRow: self.rows - 1)
     }
     
+    /// Public read-only snapshot of buffer state for diagnostics. Used to
+    /// surface scrollback health to the host app without exposing the
+    /// internal Buffer / CircularBufferLineList types.
+    public struct BufferSnapshot {
+        public let isAlternate: Bool
+        public let yDisp: Int
+        public let yBase: Int
+        public let linesCount: Int
+        public let maxLength: Int
+        public let scrollback: Int?
+    }
+
+    /// Diagnostic snapshot of the currently-active buffer. Lets host apps
+    /// confirm that scrollback configuration actually reached the buffer.
+    public var activeBufferSnapshot: BufferSnapshot {
+        BufferSnapshot(
+            isAlternate: isCurrentBufferAlternate,
+            yDisp: buffer.yDisp,
+            yBase: buffer.yBase,
+            linesCount: buffer.lines.count,
+            maxLength: buffer.lines.maxLength,
+            scrollback: buffer.scrollback
+        )
+    }
+
+    /// Snapshot of the *inactive* buffer (alt when normal is active, vice versa).
+    public var inactiveBufferSnapshot: BufferSnapshot {
+        let other: Buffer = (buffer === normalBuffer) ? altBuffer : normalBuffer
+        return BufferSnapshot(
+            isAlternate: other === altBuffer,
+            yDisp: other.yDisp,
+            yBase: other.yBase,
+            linesCount: other.lines.count,
+            maxLength: other.lines.maxLength,
+            scrollback: other.scrollback
+        )
+    }
+
     /**
      * Changes the scrollback size of the terminal after it has been instantiated.
      * Applies to both normal and alternate buffers so tmux/vim/less scroll-off

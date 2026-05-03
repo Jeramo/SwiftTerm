@@ -665,15 +665,15 @@ open class Terminal {
         normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: options.scrollback)
         normalBuffer.fillViewportRows()
 
-        // The alt buffer should never have scrollback content, but we pass
-        // scrollback: 0 instead of nil so Buffer.hasScrollback is true and
-        // Buffer.isReflowEnabled returns true. Buffer's capacity math
-        // reduces rows + 0 = rows, so no extra lines are allocated — the
-        // only effect is that resize() runs reflow() on the alt buffer,
-        // so tmux / vim / less stop leaving stale, old-width wrapping
-        // behind when the user pinch-zooms the terminal.
-        // See http://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-The-Alternate-Screen-Buffer
-        altBuffer = Buffer (cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: 0)
+        // Give the alt buffer real scrollback (matching the normal buffer)
+        // so lines tmux/vim/less scroll off the top get captured locally,
+        // the way iTerm/Terminal.app/Ghostty do via their "Save lines to
+        // scrollback in alternate screen mode" option. Strict xterm spec
+        // says alt buffer has no scrollback, but matching desktop terminal
+        // behavior is what users expect on mobile.
+        // The alt buffer's lines are still wiped on activateNormalBuffer
+        // (with clearAlt: true), so a fresh tmux attach starts clean.
+        altBuffer = Buffer (cols: cols, rows: rows, tabStopWidth: tabStopWidth, scrollback: options.scrollback)
         buffer = normalBuffer
 
         cc = CC(send8bit: false)
@@ -5536,14 +5536,15 @@ open class Terminal {
     
     /**
      * Changes the scrollback size of the terminal after it has been instantiated.
-     * The new scrollback size only affects the normal buffer, not the alternate buffer.
+     * Applies to both normal and alternate buffers so tmux/vim/less scroll-off
+     * also lands in the local scrollback at the new size.
      *
      * - Parameter newScrollback: The new scrollback size in lines. Pass `nil` to disable scrollback.
      */
     public func changeScrollback (_ newScrollback: Int?)
     {
-        // Only the normal buffer has scrollback, the alt buffer should never have scrollback.
         normalBuffer.changeHistorySize(newScrollback)
+        altBuffer.changeHistorySize(newScrollback)
 
         // Update the options to reflect the new scrollback size.
         options.scrollback = newScrollback ?? 0

@@ -30,6 +30,18 @@ final class ScreenTests {
         TerminalTestHarness.assertLineText(terminal.buffer, row: 1, equals: "test")
     }
 
+    @Test func testLargePlainStreamCanScrollBackToStart() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 10, rows: 32, scrollback: 2_000)
+        let output = (1...1_500).map(String.init).joined(separator: "\r\n") + "\r\n"
+
+        terminal.feed(text: output)
+        terminal.userScrolling = true
+        terminal.setViewYDisp(0)
+
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "1")
+        #expect(terminal.buffer.yBase > terminal.buffer.rows)
+    }
+
     @Test func testViewportDoesNotFollowWhenUserScrolling() {
         let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 2, scrollback: 10)
         terminal.feed(text: "1\r\n2\r\n3\r\n4\r\n")

@@ -2389,6 +2389,14 @@ open class Terminal {
             }
             updateRange (0)
         case 2:
+            // CSI 2J — Erase entire display. mosh and other apps emit this
+            // before painting an absolute repaint; capturing the current
+            // viewport into scrollback FIRST gives us a deterministic
+            // capture point (the heuristic snapshot-diff in parse() can
+            // miss frames that get split across multiple parse chunks).
+            if captureClearScreenRepaintScrollback {
+                captureViewportToScrollbackIfRepaintEnabled()
+            }
             j = rows
             updateRange (j - 1)
             while (j != 0) {
@@ -2398,13 +2406,23 @@ open class Terminal {
             clearAllKittyImages()
             updateRange (0)
         case 3:
-            // Clear scrollback (everything not in viewport)
-            let scrollBackSize = buffer.lines.count - rows
-            if scrollBackSize > 0 {
-                buffer.lines.trimStart (count: scrollBackSize)
-                buffer.linesTop = 0
-                buffer.yBase = max (buffer.yBase - scrollBackSize, 0)
-                buffer.yDisp = max (buffer.yDisp - scrollBackSize, 0)
+            // CSI 3J — Clear scrollback (everything not in viewport).
+            // Many shells / prompt themes / `clear` invocations send this on
+            // every redraw, which wipes user-visible scrollback that's the
+            // whole point of having a back buffer. iTerm hides it behind a
+            // setting, Terminal.app ignores it. Track occurrences via
+            // csi3JCount for diagnostics, then honor only if the host opts
+            // in via allowClearScrollback (default false, so scrollback
+            // sticks around like users expect).
+            csi3JCount &+= 1
+            if allowClearScrollback {
+                let scrollBackSize = buffer.lines.count - rows
+                if scrollBackSize > 0 {
+                    buffer.lines.trimStart (count: scrollBackSize)
+                    buffer.linesTop = 0
+                    buffer.yBase = max (buffer.yBase - scrollBackSize, 0)
+                    buffer.yDisp = max (buffer.yDisp - scrollBackSize, 0)
+                }
             }
             break;
         default:
@@ -4786,13 +4804,20 @@ open class Terminal {
                 for i in 0..<(rowCount) {
                     let src = buffer.lines [row+i+1]
                     let dst = buffer.lines [row+i]
-                    
+
                     dst.copyFrom(src, srcCol: buffer.marginLeft, dstCol: buffer.marginLeft, len: columnCount)
                 }
                 let last = buffer.lines [row+rowCount]
                 last.fill (with: CharData (attribute: da), atCol: buffer.marginLeft, len: columnCount)
             }
         } else {
+            // Reverted to the original splice-based logic. The earlier
+            // attempt to preserve scroll-up content via scroll() didn't
+            // help mosh in practice (mosh's Display::new_frame() chooses
+            // absolute repaints over CSI N S for the bursts that matter),
+            // and any per-line tdel?.scrolled callbacks confused the
+            // host's UIScrollView mid-parse. The captureRepaintScrollback
+            // hook in parse() handles the absolute-repaint case.
             for _ in 0..<p {
                 buffer.lines.splice (start: buffer.yBase + buffer.scrollTop, deleteCount: 1,
                                      items: [], change: { line in updateRange (line)})
@@ -5011,6 +5036,7 @@ open class Terminal {
      */
     public func parse (buffer: ArraySlice<UInt8>)
     {
+        preParseYBase = self.buffer.yBase
         parser.parse(data: buffer)
         if synchronizedOutputActive {
             // Reset the safety timer on each chunk so a slow-network redraw
@@ -5024,6 +5050,272 @@ open class Terminal {
                 scheduleSynchronizedOutputAutoIdle()
             }
         }
+        captureRepaintScrollIfAny()
+    }
+
+    /// After a parse() that didn't trigger natural scroll(), compare the
+    /// current visible viewport to the previous flush's snapshot. If the
+    /// previous top rows now appear lower in the viewport (a shift),
+    /// splice the disappeared rows into the back buffer so the user can
+    /// scroll back to them. No-op when natural scroll already fired or
+    /// the feature is disabled.
+    private func captureRepaintScrollIfAny() {
+        guard captureRepaintScrollback else {
+            // Still keep the snapshot fresh in case the feature is enabled
+            // mid-session — don't want a stale snapshot from many flushes ago.
+            prevVisibleSnapshot.removeAll(keepingCapacity: true)
+            return
+        }
+        let r = self.rows
+        guard r > 0 else { return }
+        let yBaseNow = self.buffer.yBase
+
+        // Snapshot current visible viewport regardless of whether we
+        // capture this flush — we need it for the next comparison.
+        var current: [BufferLine] = []
+        current.reserveCapacity(r)
+        for i in 0..<r {
+            let idx = yBaseNow + i
+            if idx < self.buffer.lines.count {
+                current.append(BufferLine(from: self.buffer.lines[idx]))
+            } else {
+                // Buffer hasn't been filled this far yet — skip detection
+                // this flush, snapshot will be re-taken next time.
+                prevVisibleSnapshot.removeAll(keepingCapacity: true)
+                return
+            }
+        }
+        defer { prevVisibleSnapshot = current }
+
+        // If natural scroll() fired during this parse, the existing path
+        // already pushed the disappeared rows into the back buffer; we
+        // must not capture them again or we'll double-count. The simple
+        // signal: yBase advanced.
+        if yBaseNow != preParseYBase {
+            repaintNaturalScrollSkips &+= 1
+            return
+        }
+
+        let prev = prevVisibleSnapshot
+        guard prev.count == r else { return }
+
+        // Two anti-false-positive guards must hold before we treat this
+        // as a scroll worth capturing:
+        //
+        // 1. The TOP rows must differ — if `prev[0..3]` == `current[0..3]`
+        //    the viewport hasn't moved (user typed at the bottom, prompt
+        //    redrew without scrolling, etc).
+        //
+        // 2. The BOTTOM rows must also differ — if `prev[r-3..r]` ==
+        //    `current[r-3..r]` it's an in-place edit at the top (cursor
+        //    move into row 0, tab-completion popup, autocomplete refresh)
+        //    where the bulk of the screen is stable. Without this check
+        //    every keystroke into row 0 captured the entire viewport as
+        //    "scrollback" once per parse — corrupting buffer state and
+        //    hammering the scrollview's contentSize / contentOffset.
+        //
+        // A real scroll / mosh frame jump differs at BOTH ends.
+        let confidence = Self.repaintCaptureConfidence
+        guard r >= confidence else { return }
+        var topMatches = true
+        for m in 0..<confidence {
+            if !rowsEqual(prev[m], current[m]) { topMatches = false; break }
+        }
+        if topMatches {
+            repaintTopMatchSkips &+= 1
+            return
+        }
+        var bottomMatches = true
+        for m in 0..<confidence {
+            if !rowsEqual(prev[r - 1 - m], current[r - 1 - m]) { bottomMatches = false; break }
+        }
+        if bottomMatches {
+            repaintBottomMatchSkips &+= 1
+            return
+        }
+
+        // Find K such that prev[K + 0..confidence] matches current[0..confidence].
+        // Smallest K wins (we prefer the smallest scroll interpretation,
+        // which avoids treating a 1-row scroll as a 50-row repaint).
+        let maxScan = min(r, Self.repaintCaptureMaxLinesPerFlush)
+        var bestK = 0
+        for K in 1..<maxScan {
+            if r - K < confidence { break }
+            var match = true
+            for m in 0..<confidence {
+                if !rowsEqual(prev[K + m], current[m]) { match = false; break }
+            }
+            if match { bestK = K; break }
+        }
+        if bestK == 0 {
+            // No partial match found AND we already ruled out "no shift".
+            // This is a full-screen repaint — characteristic of Mosh
+            // delivering a frame whose viewport doesn't overlap the
+            // previous one (big bursts get collapsed into state diffs
+            // larger than `rows`). Capture the entire previous viewport
+            // as scrollback so the user keeps the history. Skip the
+            // capture if prev is all-blank (a freshly-cleared screen
+            // shouldn't seed scrollback with empty rows).
+            var allBlank = true
+            for line in prev {
+                if !rowIsEmpty(line) { allBlank = false; break }
+            }
+            if allBlank {
+                repaintAllBlankSkips &+= 1
+                return
+            }
+            bestK = prev.count
+        }
+
+        // Splice the captured rows in at yBase. CircularBufferLineList's
+        // splice handles capacity by trimming from the start when full;
+        // adjust yBase / yDisp to compensate.
+        let captured = compactRepaintCapturedRows(Array(prev[0..<bestK]))
+        guard !captured.isEmpty else {
+            repaintAllBlankSkips &+= 1
+            return
+        }
+        let preCount = self.buffer.lines.count
+        let preYDisp = self.buffer.yDisp
+        let preYBase = yBaseNow
+
+        self.buffer.lines.splice(start: preYBase, deleteCount: 0, items: captured, change: { _ in })
+
+        let postCount = self.buffer.lines.count
+        let countAdded = postCount - preCount
+        let countTrimmed = bestK - countAdded
+        self.buffer.yBase = preYBase + countAdded
+        if userScrolling {
+            // User is reading scrollback — keep their position stable
+            // accounting for any trim that happened.
+            self.buffer.yDisp = max(0, preYDisp - max(0, countTrimmed))
+        } else {
+            self.buffer.yDisp = self.buffer.yBase
+        }
+        if self.buffer.hasScrollback {
+            self.buffer.linesTop += max(0, countTrimmed)
+        }
+        repaintCapturedRows &+= countAdded
+        repaintCaptureFires &+= 1
+        // Fire scrolled so the host's UIScrollView contentSize /
+        // contentOffset / dirty-region track our advanced yBase / yDisp.
+        // Without this the renderer keeps drawing from the OLD viewport
+        // position even though the buffer has shifted underneath it,
+        // producing a stale screen that only refreshes when the user
+        // switches tabs (or any other event that forces a redraw).
+        // Natural scroll() in Terminal.swift fires the same callback
+        // mid-parse without issue.
+        tdel?.scrolled(source: self, yDisp: self.buffer.yDisp)
+    }
+
+    /// Cell-level equality of two buffer lines used by the repaint-scroll
+    /// detector. Compares only character content, not attributes — color
+    /// changes in a prompt redraw shouldn't defeat the match.
+    private func rowsEqual(_ a: BufferLine, _ b: BufferLine) -> Bool {
+        let ac = a.count
+        guard ac == b.count else { return false }
+        for i in 0..<ac {
+            if a[i].getCharacter() != b[i].getCharacter() { return false }
+        }
+        return true
+    }
+
+    /// Eager capture of the current visible viewport into scrollback,
+    /// triggered from CSI 2J (erase display). When mosh-server's
+    /// Display::new_frame() decides to absolute-repaint a frame, it
+    /// often clears the screen first; capturing the pre-clear contents
+    /// into the back buffer here gives us byte-stream parity with what
+    /// the user saw without depending on a snapshot-diff heuristic that
+    /// chunked parses can fragment. No-op when the feature is off, on
+    /// the alt buffer, or when the viewport is all-blank already.
+    func captureViewportToScrollbackIfRepaintEnabled() {
+        guard captureRepaintScrollback else { return }
+        guard buffer === normalBuffer else { return }
+        let r = self.rows
+        guard r > 0 else { return }
+        let yBaseNow = self.buffer.yBase
+
+        // Snapshot the current visible viewport.
+        var captured: [BufferLine] = []
+        captured.reserveCapacity(r)
+        var anyContent = false
+        for i in 0..<r {
+            let idx = yBaseNow + i
+            guard idx < self.buffer.lines.count else { return }
+            let line = self.buffer.lines[idx]
+            if !rowIsEmpty(line) { anyContent = true }
+            captured.append(BufferLine(from: line))
+        }
+        guard anyContent else { return }
+
+        captured = compactRepaintCapturedRows(captured)
+        guard !captured.isEmpty else { return }
+
+        let preCount = self.buffer.lines.count
+        let preYDisp = self.buffer.yDisp
+        let preYBase = yBaseNow
+
+        self.buffer.lines.splice(start: preYBase, deleteCount: 0, items: captured, change: { _ in })
+
+        let postCount = self.buffer.lines.count
+        let countAdded = postCount - preCount
+        let countTrimmed = captured.count - countAdded
+        self.buffer.yBase = preYBase + countAdded
+        if userScrolling {
+            self.buffer.yDisp = max(0, preYDisp - max(0, countTrimmed))
+        } else {
+            self.buffer.yDisp = self.buffer.yBase
+        }
+        if self.buffer.hasScrollback {
+            self.buffer.linesTop += max(0, countTrimmed)
+        }
+        repaintCapturedRows &+= countAdded
+        csi2JCaptureFires &+= 1
+        // Reset the snapshot so the post-erase parse() pass doesn't try
+        // to diff against pre-erase state and double-capture.
+        prevVisibleSnapshot.removeAll(keepingCapacity: true)
+        tdel?.scrolled(source: self, yDisp: self.buffer.yDisp)
+    }
+
+    /// True if the row contains only spaces / nulls. Used to skip the
+    /// full-repaint capture path when the previous viewport was a
+    /// freshly-cleared screen — capturing 50 blank rows as "scrollback"
+    /// would just bloat the back buffer with whitespace.
+    private func rowIsEmpty(_ line: BufferLine) -> Bool {
+        let n = line.count
+        for i in 0..<n {
+            let c = line[i].getCharacter()
+            if c != " " && c != "\0" { return false }
+        }
+        return true
+    }
+
+    /// Compact repaint-derived rows for transcript-style scrollback.
+    /// Full-screen repaint captures can include large blank regions between
+    /// pane content and tmux/status UI. Keeping all of those rows makes the
+    /// scrollback feel like a stack of screenshots instead of a timeline.
+    private func compactRepaintCapturedRows(_ rows: [BufferLine]) -> [BufferLine] {
+        guard compactRepaintScrollbackCaptures else { return rows }
+
+        var compacted: [BufferLine] = []
+        compacted.reserveCapacity(rows.count)
+        var previousWasBlank = false
+
+        for row in rows {
+            let blank = rowIsEmpty(row)
+            if blank {
+                if compacted.isEmpty || previousWasBlank {
+                    continue
+                }
+            }
+            compacted.append(row)
+            previousWasBlank = blank
+        }
+
+        while let last = compacted.last, rowIsEmpty(last) {
+            compacted.removeLast()
+        }
+        return compacted
     }
      
     /**
@@ -5534,6 +5826,81 @@ open class Terminal {
         refresh (startRow: 0, endRow: self.rows - 1)
     }
     
+    /// When false, CSI 3J (erase scrollback) is observed but ignored, so
+    /// shells / prompts that emit it on every redraw don't wipe local
+    /// scrollback. Default false to match user expectations on mobile.
+    public var allowClearScrollback: Bool = false
+
+    /// When repaint capture is enabled, CSI 2J can eagerly capture the
+    /// current viewport before a full redraw. Useful for Mosh frame jumps,
+    /// but too screenshot-like for tmux replay scrollback.
+    public var captureClearScreenRepaintScrollback: Bool = true
+
+    /// When true, repaint-derived captures trim leading/trailing blank rows
+    /// and collapse internal blank runs so replay scrollback reads like a
+    /// timeline rather than a stack of full-screen snapshots.
+    public var compactRepaintScrollbackCaptures: Bool = false
+
+    /// Number of times CSI 3J has been received since the terminal was
+    /// instantiated. Useful for diagnosing missing scrollback caused by
+    /// prompt themes or `clear` invocations. Wraps using overflow add.
+    public private(set) var csi3JCount: Int = 0
+
+    /// When true, after each parse() the visible viewport is compared to
+    /// the previous flush's snapshot. If content has visibly shifted up
+    /// (Mosh repaint, tmux full redraw, anything that updates via
+    /// absolute positioning instead of native scroll-up), the rows that
+    /// disappeared from the top are spliced into the back buffer so the
+    /// user keeps their scrollback. Default false; the host enables it
+    /// for connections where natural scroll() events are unreliable —
+    /// principally Mosh, whose State Synchronization Protocol collapses
+    /// bursts into screen-state diffs and never sends the intermediate
+    /// byte stream.
+    public var captureRepaintScrollback: Bool = false
+
+    /// Number of rows captured into scrollback by the repaint-detection
+    /// hook since the terminal was instantiated. Useful for verifying
+    /// the feature is actually catching mosh-style repaints.
+    public private(set) var repaintCapturedRows: Int = 0
+
+    /// Number of times the snapshot-diff heuristic actually inserted
+    /// rows into the back buffer.
+    public private(set) var repaintCaptureFires: Int = 0
+    /// Number of times the heuristic ran but returned early because
+    /// natural scroll() already advanced yBase during this parse.
+    public private(set) var repaintNaturalScrollSkips: Int = 0
+    /// Number of times the heuristic returned early because top rows
+    /// matched between prev and current (no shift).
+    public private(set) var repaintTopMatchSkips: Int = 0
+    /// Number of times the heuristic returned early because bottom
+    /// rows matched (in-place edit at top).
+    public private(set) var repaintBottomMatchSkips: Int = 0
+    /// Number of times the heuristic returned early because prev was
+    /// all-blank (freshly-cleared screen — nothing useful to capture).
+    public private(set) var repaintAllBlankSkips: Int = 0
+    /// Number of times the eager CSI 2J hook fired and inserted rows.
+    public private(set) var csi2JCaptureFires: Int = 0
+
+    /// Visible-viewport snapshot captured at the end of the previous
+    /// parse(). Compared on the next parse to detect repaint-as-scroll.
+    /// Cloned BufferLines so subsequent in-place writes don't mutate the
+    /// snapshot before comparison.
+    private var prevVisibleSnapshot: [BufferLine] = []
+    /// `buffer.yBase` captured at the start of parse(). Used to skip the
+    /// repaint-capture path when natural scroll() already fired during
+    /// this parse — that path inserts into scrollback itself, so we'd
+    /// double-count if we also captured here.
+    private var preParseYBase: Int = 0
+    /// Hard cap so a single parse can't insert hundreds of "scrollback"
+    /// rows from a full-screen repaint where every row genuinely changed
+    /// (e.g., tmux pane switch, vim file open).
+    private static let repaintCaptureMaxLinesPerFlush = 200
+    /// Minimum number of consecutive matching rows required before we
+    /// believe a shift is a real scroll rather than a coincidental
+    /// shared row. Three rows in a row matching after the offset is
+    /// strong evidence of a scroll.
+    private static let repaintCaptureConfidence = 3
+
     /// Public read-only snapshot of buffer state for diagnostics. Used to
     /// surface scrollback health to the host app without exposing the
     /// internal Buffer / CircularBufferLineList types.

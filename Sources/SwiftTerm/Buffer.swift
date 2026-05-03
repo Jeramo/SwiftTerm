@@ -425,7 +425,16 @@ public final class Buffer {
             // Deal with columns increasing (reducing needs to happen after reflow)
             
             if cols < newCols {
-                for i in 0..<lines.maxLength {
+                // Iterate logical lines only (`lines.count`), not maxLength.
+                // CircularBufferLineList lazy-allocates nil slots on first
+                // subscript access using `getBlankLine` which reads
+                // `self.cols` (still the OLD cols here). Touching
+                // [count..maxLength] would create thousands of OLD-cols
+                // BufferLines for nothing on a buffer with large maxLength
+                // (alt buffer with scrollback enabled is `scrollback + rows`
+                // = often 11500+ slots). Logical slots beyond `count` get
+                // lazy-created later, after cols = newCols, so they're fine.
+                for i in 0..<lines.count {
                     lines [i].resize (cols: newCols, fillData: CharData.Null)
                 }
 
@@ -505,9 +514,10 @@ public final class Buffer {
         
         if isReflowEnabled {
             reflow (newCols, newRows)
-            // Trim the end of the line off if cols shrunk
+            // Trim the end of the line off if cols shrunk. Same logic
+            // as the widening loop above — only iterate filled slots.
             if cols > newCols {
-                for i in 0..<lines.maxLength {
+                for i in 0..<lines.count {
                     lines [i].resize (cols: newCols, fillData: CharData.Null)
                 }
             }
@@ -520,8 +530,18 @@ public final class Buffer {
         // scrollBottom setters) wrap their abort() in #if DEBUG / return.
         // Mirror that: in DEBUG, fail loud; in release, recover by resizing
         // the line up to newCols rather than killing the user's session.
+        //
+        // Iterate `lines.count` (logical filled slots), NOT `lines.maxLength`.
+        // The CircularBufferLineList lazily allocates nil slots on first
+        // subscript access using `getBlankLine`, which uses `self.cols` —
+        // still the OLD cols at this point in resize(). On a buffer with
+        // a large maxLength (alt buffer with scrollback enabled), every
+        // nil slot in [count..maxLength] would get lazy-created at the
+        // OLD cols here, then immediately fail this check against newCols.
+        // Slots past lines.count aren't logically reachable; their lazy
+        // creation will happen later when cols == newCols.
         if lines.count > 0 {
-            for i in 0..<lines.maxLength {
+            for i in 0..<lines.count {
                 let line = lines [i]
                 if line.count < newCols {
                     #if DEBUG

@@ -1907,18 +1907,16 @@ extension TerminalView {
         return []
     }
     /**
-     * Returns the thumb size in proportion to the visible content of the entire content, alternate buffers are not scrollable, so this returns 0
+     * Returns the thumb size in proportion to the visible content of the entire content.
      */
     public var scrollThumbsize: CGFloat {
         get {
             let displayBuffer = terminal.displayBuffer
-            if terminal.isDisplayBufferAlternate {
-                return 0
-            }
+            guard displayBuffer.lines.count > 0 else { return 1 }
             
             // the thumb size is the proportion of the visible content of the
             // entire content but don't make it too small
-            return max (CGFloat (displayBuffer.rows) / CGFloat (displayBuffer.lines.count), 0.01)
+            return min(max(CGFloat(displayBuffer.rows) / CGFloat(displayBuffer.lines.count), 0.01), 1)
         }
     }
     
@@ -1928,11 +1926,14 @@ extension TerminalView {
     public var scrollPosition: Double {
         get {
             let displayBuffer = terminal.displayBuffer
-            if terminal.isDisplayBufferAlternate || displayBuffer.yDisp <= 0 {
+            if displayBuffer.yDisp <= 0 {
                 return 0
             }
             
             let maxScrollback = displayBuffer.lines.count - displayBuffer.rows
+            if maxScrollback <= 0 {
+                return 1
+            }
             if displayBuffer.yDisp >= maxScrollback {
                 return 1
             }
@@ -1947,8 +1948,7 @@ extension TerminalView {
     public var canScroll: Bool {
         get {
             let displayBuffer = terminal.displayBuffer
-            return !terminal.isDisplayBufferAlternate &&
-                displayBuffer.hasScrollback &&
+            return displayBuffer.hasScrollback &&
                 displayBuffer.lines.count > displayBuffer.rows
         }
     }
@@ -1996,7 +1996,7 @@ extension TerminalView {
     /// Scrolls the content of the terminal one page up
     public func pageUp()
     {
-        if terminal.isDisplayBufferAlternate {
+        if terminal.isDisplayBufferAlternate && !canScroll {
             send (EscapeSequences.cmdPageUp)
         } else {
             scrollUp (lines: terminal.rows)
@@ -2006,7 +2006,7 @@ extension TerminalView {
     /// Scrolls the content of the terminal one page down
     public func pageDown ()
     {
-        if terminal.isDisplayBufferAlternate {
+        if terminal.isDisplayBufferAlternate && !canScroll {
             send (EscapeSequences.cmdPageDown)
         } else {
             scrollDown (lines: terminal.rows)

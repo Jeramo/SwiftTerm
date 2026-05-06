@@ -515,6 +515,21 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     {
         link.isPaused = false
     }
+
+    /// Force a repaint of the current buffer state, even if the parser
+    /// hasn't produced new output. MTKView is configured with
+    /// `isPaused = true` + `enableSetNeedsDisplay = true`, so when the
+    /// host hides the terminal (e.g. tab pool), the next becoming-visible
+    /// transition can leave the GPU showing a stale or partial frame
+    /// because nothing nudged the renderer. Hosts call this on un-hide.
+    public func forceRedraw()
+    {
+        terminal.updateFullScreen()
+        queuePendingDisplay()
+        #if canImport(MetalKit)
+        requestMetalDisplay()
+        #endif
+    }
     
     func suspendDisplayUpdates()
     {

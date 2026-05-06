@@ -1834,15 +1834,21 @@ extension TerminalView {
     // It is also cheap, so should be called when new data has been posted or received.
     func queuePendingDisplay ()
     {
-        // throttle
-        if !pendingDisplay {
-            let fps120 = 8_333_333
-            let fpsDelay = fps120
-            pendingDisplay = true
-            DispatchQueue.main.asyncAfter(
-                deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fpsDelay)),
-                execute: updateDisplay)
-        }
+        if pendingDisplay { return }
+        pendingDisplay = true
+#if os(iOS) || os(visionOS)
+        // Vsync-aligned: wake the existing CADisplayLink and let `step()`
+        // drive `updateDisplay()` on the next frame. Inherits ProMotion 120Hz
+        // automatically when the link's preferredFrameRateRange allows it.
+        link.isPaused = false
+#else
+        // macOS has no display link wired up; fall back to a wall-clock
+        // throttle. 8.33ms = ~120Hz cap.
+        let fpsDelay: UInt64 = 8_333_333
+        DispatchQueue.main.asyncAfter(
+            deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + fpsDelay),
+            execute: updateDisplay)
+#endif
     }
 
 #if canImport(MetalKit)
@@ -1857,17 +1863,23 @@ extension TerminalView {
         guard metalView != nil else {
             return
         }
+#if os(iOS) || os(visionOS)
+        // MTKView coalesces setNeedsDisplay internally and presents on its
+        // own display link — calling synchronously is already vsync-aligned.
+        pendingMetalDisplay = false
+        requestMetalDisplay()
+#else
         if !pendingMetalDisplay {
-            let fps120 = 8_333_333
-            let fpsDelay = fps120
+            let fpsDelay: UInt64 = 8_333_333
             pendingMetalDisplay = true
             DispatchQueue.main.asyncAfter(
-                deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fpsDelay))) { [weak self] in
+                deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + fpsDelay)) { [weak self] in
                     guard let self else { return }
                     self.pendingMetalDisplay = false
                     self.metalView?.setNeedsDisplay(self.metalView?.bounds ?? .zero)
                 }
         }
+#endif
     }
 #endif
     

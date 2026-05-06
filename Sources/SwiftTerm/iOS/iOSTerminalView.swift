@@ -431,7 +431,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func setupDisplayUpdates ()
     {
         link = CADisplayLink(target: self, selector: #selector(step))
-            
+        if #available(iOS 15.0, visionOS 1.0, *) {
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+        }
         link.add(to: .current, forMode: .default)
         suspendDisplayUpdates()
     }
@@ -501,6 +503,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     @objc
     func step(displaylink: CADisplayLink) {
         updateDisplay()
+        // Re-suspend once everything's drawn so the link doesn't keep
+        // ticking at 120Hz when the terminal is idle. queuePendingDisplay
+        // and feedPrepare unpause it again on demand.
+        if !pendingDisplay {
+            link.isPaused = true
+        }
     }
 
     func startDisplayUpdates()

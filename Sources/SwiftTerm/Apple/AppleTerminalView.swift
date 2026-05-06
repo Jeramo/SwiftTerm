@@ -1836,9 +1836,8 @@ extension TerminalView {
     {
         // throttle
         if !pendingDisplay {
-            let fps60 = 16670000
-            // let fps30 = 16670000*2
-            let fpsDelay = fps60
+            let fps120 = 8_333_333
+            let fpsDelay = fps120
             pendingDisplay = true
             DispatchQueue.main.asyncAfter(
                 deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fpsDelay)),
@@ -1859,8 +1858,8 @@ extension TerminalView {
             return
         }
         if !pendingMetalDisplay {
-            let fps60 = 16670000
-            let fpsDelay = fps60
+            let fps120 = 8_333_333
+            let fpsDelay = fps120
             pendingMetalDisplay = true
             DispatchQueue.main.asyncAfter(
                 deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fpsDelay))) { [weak self] in

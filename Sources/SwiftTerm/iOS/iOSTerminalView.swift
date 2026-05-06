@@ -401,6 +401,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             mtkView.framebufferOnly = true
             mtkView.colorPixelFormat = .bgra8Unorm
             mtkView.isUserInteractionEnabled = false
+            mtkView.preferredFramesPerSecond = 120
             let renderer = try MetalTerminalRenderer(view: mtkView, terminalView: self)
             mtkView.delegate = renderer
             if let caretView = caretView {

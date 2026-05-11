@@ -324,6 +324,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
 #endif
         if frameSemaphore.wait(timeout: .now()) != .success {
             markPendingRedraw()
+            scheduleRetry(for: view)
             return
         }
         guard let terminalView = terminalView else {
@@ -364,6 +365,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         guard let drawable, let passDescriptor else {
             markPendingRedraw()
             frameSemaphore.signal()
+            scheduleRetry(for: view)
             return
         }
 #if canImport(os)
@@ -542,6 +544,20 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         redrawLock.lock()
         pendingRedraw = true
         redrawLock.unlock()
+    }
+
+    /// Schedules a setNeedsDisplay on the next runloop turn so a draw
+    /// that bailed early (drawable not ready, semaphore busy) gets
+    /// retried without needing an external event. Without this, the
+    /// pendingRedraw flag is only ever consumed by a successful draw's
+    /// completion handler, so the first miss after un-hide stays
+    /// missed until the user taps the screen / a layout change fires
+    /// a fresh setNeedsDisplay.
+    private func scheduleRetry(for view: MTKView) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(16)) { [weak view] in
+            guard let view = view else { return }
+            view.setNeedsDisplay(view.bounds)
+        }
     }
 
     private func consumePendingRedraw() -> Bool {

@@ -151,7 +151,12 @@ class KeyboardView: UIView {
 
     public override var bounds: CGRect {
         didSet {
-            buildUI ()
+            // Only the size actually changes the button layout — origin-only
+            // sets (which UIKit fires plenty of during scroll/animation
+            // passes) used to rebuild every one of the 30 buttons each time.
+            if oldValue.size != bounds.size {
+                buildUI ()
+            }
         }
     }
     public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {

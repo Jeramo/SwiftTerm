@@ -413,6 +413,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // swipe-to-type (QuickPath) input.
         contentInsetAdjustmentBehavior = .never
         bounces = false
+        // UIScrollView's default scrollsToTop=true means a status-bar tap
+        // scrolls to (0,0) — for a terminal that's the oldest scrollback
+        // line, often blank, never what the user wants. Disable so the
+        // status-bar tap propagates to a parent scroll view (if any) or
+        // becomes a no-op, instead of dumping the user into ancient
+        // scrollback every time they reach for the clock. Matches what
+        // Terminus and Blink do.
+        scrollsToTop = false
 
         setupKeyboardButtonColors()
         setupDisplayUpdates ();
@@ -1924,6 +1932,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
 
         forceRedraw()
+
+        // Native iOS pattern (Mail, Notes, Safari): flash the scroll
+        // indicator briefly on view appearance so users can see at a
+        // glance whether the content scrolls and how much scrollback is
+        // available, without having to start a drag. Skipped under
+        // Reduce Motion so the flash doesn't violate the user's
+        // accessibility preference.
+        if !UIAccessibility.isReduceMotionEnabled, contentSize.height > bounds.height {
+            flashScrollIndicators()
+        }
 
         // Two-step repaint: clear the local visible viewport, then ask the
         // remote shell to repaint into the now-blank canvas. Ctrl-L alone

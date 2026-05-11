@@ -189,6 +189,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     private var activeCommandKeys: Set<UIKeyboardHIDUsage> = []
     private var pointerInteraction: UIPointerInteraction?
     private var hoverGesture: UIHoverGestureRecognizer?
+    // Tracks buffer.linesTop so we can shift the SelectionService's stored
+    // row indices whenever the scrollback ring rolls (old lines fall off the
+    // top). Without this, selection coordinates go stale during streaming
+    // output and Copy returns bytes from the wrong rows.
+    private var lastSeenLinesTop: Int = 0
     // Haptic generators for native-feeling selection feedback. Lazy so unit
     // tests that never touch UIKit don't allocate them. The Selection
     // generator is reused across drag-extends and primed via prepare() right
@@ -1523,6 +1528,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     open func scrolled(source terminal: Terminal, yDisp: Int) {
+        // Reconcile selection rows with the scrollback ring. CircularList.push
+        // overwrites the oldest entry once the buffer is full, which silently
+        // shifts every absolute row index that external code (us) holds onto.
+        // SelectionService stores start/end/pivot as raw row ints, so a
+        // selection captured before output streamed would otherwise point at
+        // different content after each line drop — Copy would return the
+        // wrong text, and the highlight would slide off its real range.
+        let currentLinesTop = terminal.buffer.linesTop
+        if currentLinesTop > lastSeenLinesTop {
+            let trimmed = currentLinesTop - lastSeenLinesTop
+            selection.shiftRowsAfterTrim(lineCount: trimmed)
+        }
+        lastSeenLinesTop = currentLinesTop
         //XselectionView.notifyScrolled(source: terminal)
         updateScroller()
         // Once scrollback is full, lines.count is capped and yDisp is pinned at

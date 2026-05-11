@@ -99,6 +99,41 @@ class SelectionService: CustomDebugStringConvertible {
         let maxRow = max(0, buffer.lines.count - 1)
         return Position(col: min(p.col, buffer.cols - 1), row: min(p.row, maxRow))
     }
+
+    /**
+     * Shifts every stored row index down by `lineCount`, used by the host
+     * view when the scrollback ring rolls and the oldest lines fall off the
+     * top of the CircularList (each drop decrements the row that holds the
+     * same content). If the entire selection scrolls off the top the
+     * selection is cleared; if only the leading edge does, start is clamped
+     * to row 0 so the trailing portion that's still on-screen stays selected.
+     *
+     * Callers should invoke this from `scrolled(source:yDisp:)` whenever
+     * `buffer.linesTop` advances, before reading getSelectedText() or
+     * redrawing the selection highlight.
+     */
+    public func shiftRowsAfterTrim (lineCount: Int) {
+        guard lineCount > 0, active else { return }
+
+        if end.row - lineCount < 0 {
+            // Whole selection rolled past the top of scrollback.
+            active = false
+            return
+        }
+        if let p = pivot, p.row - lineCount < 0 {
+            // Pivot fell off too — drop it so a subsequent drag picks a
+            // fresh anchor based on current endpoint distances instead of
+            // extending from a position that no longer exists.
+            pivot = nil
+        } else if let p = pivot {
+            pivot = Position(col: p.col, row: p.row - lineCount)
+        }
+
+        let newStartRow = max(0, start.row - lineCount)
+        let newEndRow = end.row - lineCount
+        start = Position(col: start.col, row: newStartRow)
+        end = Position(col: end.col, row: newEndRow)
+    }
     /**
      * Sets the selection, this is validated against the
      */

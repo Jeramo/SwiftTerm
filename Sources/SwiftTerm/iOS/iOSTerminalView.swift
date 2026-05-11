@@ -189,6 +189,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     private var activeCommandKeys: Set<UIKeyboardHIDUsage> = []
     private var pointerInteraction: UIPointerInteraction?
     private var hoverGesture: UIHoverGestureRecognizer?
+    // Haptic generators for native-feeling selection feedback. Lazy so unit
+    // tests that never touch UIKit don't allocate them. The Selection
+    // generator is reused across drag-extends and primed via prepare() right
+    // before a likely drag starts.
+    private lazy var selectionHaptics = UISelectionFeedbackGenerator()
+    private lazy var grabHaptic = UIImpactFeedbackGenerator(style: .medium)
+    // Last grid position the selection-pan haptic fired for, so we only
+    // tick on real cell-boundary moves (not on every gesture .changed event).
+    private var lastSelectionHapticPos: Position?
     // Native pill-style edit menu (iOS 16+). Typed as Any so this file still
     // compiles against the iOS 14 minimum deployment target; cast at use site.
     // Named with a `swiftTerm` prefix so subclasses can keep their own
@@ -709,9 +718,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     {
          if gestureRecognizer.state == .began {
              let _ = self.becomeFirstResponder()
+             // Tactile "thump" matches how UITextView confirms a long-press
+             // selection in Safari/Notes. Prime the selection-tick generator
+             // here too — a drag often follows.
+             grabHaptic.impactOccurred()
+             selectionHaptics.prepare()
              let tapLocation = gestureRecognizer.location(in: gestureRecognizer.view)
              let tapRegion = makeContextMenuRegionForTap (point: tapLocation)
-             
+
              showContextMenu (forRegion: tapRegion,
                               pos: calculateTapHit (gesture: gestureRecognizer).grid)
           }
@@ -867,6 +881,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             selection.selectWordOrExpression(at: hit, in: terminal.displayBuffer)
             selection.selectionMode = .character
             enableSelectionPanGesture()
+            grabHaptic.impactOccurred()
+            selectionHaptics.prepare()
             showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
             queuePendingDisplay()
         }
@@ -891,6 +907,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             let hit = calculateTapHit(gesture: gestureRecognizer).grid
             selection.select(row: hit.row)
             enableSelectionPanGesture()
+            grabHaptic.impactOccurred()
             showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
             queuePendingDisplay()
         }
@@ -1037,18 +1054,29 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     extend = true
                 }
                 if extend {
+                    // User grabbed a selection handle — tactile confirmation.
+                    grabHaptic.impactOccurred()
+                    selectionHaptics.prepare()
+                    lastSelectionHapticPos = hit
                     selection.pivotExtend(bufferPosition: hit)
                     requestDisplay()
                     break
                 }
             }
             panStart = hit
+            lastSelectionHapticPos = nil
         case .changed:
             let absoluteY = gestureRecognizer.location (in: self).y - contentOffset.y
             let hit = calculateTapHit(gesture: gestureRecognizer).grid
             if selection.active {
                 stopSelectionTimer()
                 selection.pivotExtend(bufferPosition: hit)
+                // Tick on each cell-boundary change so the drag feels like
+                // moving a UITextView selection handle in Safari/Notes.
+                if lastSelectionHapticPos != hit {
+                    selectionHaptics.selectionChanged()
+                    lastSelectionHapticPos = hit
+                }
                 gestureRecognizer.setTranslation(CGPoint.zero, in: self)
                 if absoluteY < 0 || absoluteY > bounds.height {
                     startSelectionTimer {
@@ -1123,7 +1151,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func setupGestures ()
     {
         let longPress = UILongPressGestureRecognizer (target: self, action: #selector(longPress(_:)))
-        longPress.minimumPressDuration = 0.7
+        // Match the iOS-system default (UITextView, Safari). 0.7s felt sluggish
+        // compared to native text views; 0.5s is the canonical iOS long-press.
+        longPress.minimumPressDuration = 0.5
         addGestureRecognizer(longPress)
         
         let singleTap = UITapGestureRecognizer (target: self, action: #selector(singleTap(_:)))

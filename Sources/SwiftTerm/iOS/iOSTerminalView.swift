@@ -591,6 +591,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         requestMetalDisplay()
         #endif
     }
+
+    /// Request a redisplay without invalidating any renderer caches. Use
+    /// this when the host knows the buffer/atlas state is still valid but
+    /// wants to nudge a paint cycle after a layout pass settles (e.g., the
+    /// safety-net second tick after `forceRedraw()` on tab re-entry).
+    /// Unlike `forceRedraw()`, this does *not* nuke the per-row cache, so
+    /// successive calls are cheap and don't throw away vertex/UV work the
+    /// renderer just did.
+    public func nudgeRedisplay() {
+        queuePendingDisplay()
+        #if canImport(MetalKit)
+        requestMetalDisplay()
+        #endif
+    }
     
     func suspendDisplayUpdates()
     {

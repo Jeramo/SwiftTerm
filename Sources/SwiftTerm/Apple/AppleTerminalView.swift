@@ -1805,14 +1805,23 @@ extension TerminalView {
         //caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * CGFloat(terminal.buffer.x)), y: lineOrigin.y)
         let buffer = terminal.displayBuffer
         let vy = buffer.yBase + buffer.y
-        
+
         if vy >= buffer.yDisp + buffer.rows {
+            // Cursor is scrolled out of the visible region.
             caretView.removeFromSuperview()
             return
-        } else if terminal.cursorHidden == false && caretView.superview != self {
+        }
+        if terminal.cursorHidden {
+            // Nothing to draw, and the frame-set / setText below would be
+            // pure overhead on an orphaned view. Remove if needed, then
+            // bail without computing the new origin.
+            if caretView.superview == self {
+                caretView.removeFromSuperview()
+            }
+            return
+        }
+        if caretView.superview != self {
             addSubview(caretView)
-        } else if terminal.cursorHidden == true && caretView.superview == self {
-            caretView.removeFromSuperview()
         }
         let doublePosition = buffer.lines [vy].renderMode == .single ? 1.0 : 2.0
         #if os(iOS) || os(visionOS)
@@ -1822,7 +1831,15 @@ extension TerminalView {
         let offset = (cellDimension.height * (CGFloat(buffer.y-(buffer.yDisp-buffer.yBase)+1)))
         let lineOrigin = CGPoint(x: 0, y: frame.height - offset)
         #endif
-        caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(buffer.x)), y: lineOrigin.y)
+        let newOrigin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(buffer.x)),
+                                y: lineOrigin.y)
+        if caretView.frame.origin != newOrigin {
+            // UIView.frame setter goes through the Obj-C runtime even when
+            // the value is identical — skip on no-op so a stable cursor
+            // position during streaming output doesn't trip layout/dirty
+            // bookkeeping every frame.
+            caretView.frame.origin = newOrigin
+        }
         caretView.setText (ch: buffer.lines [vy][buffer.x])
     }
     

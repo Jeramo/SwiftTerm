@@ -215,6 +215,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     // before a likely drag starts.
     private lazy var selectionHaptics = UISelectionFeedbackGenerator()
     private lazy var grabHaptic = UIImpactFeedbackGenerator(style: .medium)
+    // Confirmation tick for discrete actions (link tap, copy, paste).
+    // .light is the gentlest impact style and matches what Safari fires
+    // on a successful link follow — strong enough to feel intentional,
+    // soft enough not to feel like the grab haptic of a long-press.
+    private lazy var actionHaptic = UIImpactFeedbackGenerator(style: .light)
     // Last grid position the selection-pan haptic fired for, so we only
     // tick on real cell-boundary moves (not on every gesture .changed event).
     private var lastSelectionHapticPos: Position?
@@ -725,6 +730,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     @objc open override func copy(_ sender: Any?) {
         UIPasteboard.general.string = selection.getSelectedText()
+        // Light confirmation tick: iOS 16+ already shows a brief "copied"
+        // pill from the system, but a haptic tells users the action
+        // landed even when their eyes are still on the selection that's
+        // now being cleared underneath them. Matches Notes/Safari copy.
+        actionHaptic.impactOccurred()
         selection.selectNone()
         disableSelectionPanGesture()
     }
@@ -877,11 +887,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let openImage = UIImage(systemName: "arrow.up.right.square")
         let open = UIAction(title: "Open Link", image: openImage) { [weak self] _ in
             guard let self = self else { return }
+            self.actionHaptic.impactOccurred()
             self.terminalDelegate?.requestOpenLink(source: self, link: url, params: [:])
         }
         let copyImage = UIImage(systemName: "doc.on.doc")
-        let copy = UIAction(title: "Copy Link", image: copyImage) { _ in
+        let copy = UIAction(title: "Copy Link", image: copyImage) { [weak self] _ in
             UIPasteboard.general.string = url
+            self?.actionHaptic.impactOccurred()
         }
         let shareImage = UIImage(systemName: "square.and.arrow.up")
         let share = UIAction(title: "Share…", image: shareImage) { [weak self] _ in
@@ -1015,6 +1027,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
             let tapHit = calculateTapHit(gesture: gestureRecognizer).grid
             if let result = linkForClick(at: tapHit, hasCommandModifier: commandActive) {
+                // Subtle confirmation tick — Safari does the same thing
+                // when you tap a link. Tells the user "yes, that
+                // registered" before the system handoff (which on iOS
+                // can take a beat to animate Safari open).
+                actionHaptic.impactOccurred()
                 terminalDelegate?.requestOpenLink(source: self, link: result.link, params: result.params)
                 return
             }

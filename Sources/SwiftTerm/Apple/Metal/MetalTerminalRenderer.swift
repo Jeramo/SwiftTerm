@@ -171,6 +171,16 @@ struct CacheSignature: Hashable {
     let fontName: String
     let fontSize: Double
     let isAltBuffer: Bool
+    // CircularList.subscript uses (startIndex + index) % capacity, so when the
+    // buffer rolls (linesTop++) the same logical row index points at NEW
+    // content. Without this in the signature, the cache happily returned
+    // stale vertex buffers built against the pre-roll content of that slot
+    // — visible as duplicate spinner rows or leftover digits trailing into
+    // scrollback in fast-redraw TUIs (Claude Code, tmux status bars).
+    // updateRange-driven dirty range usually catches this for the active
+    // viewport, but rows that scroll into the upper scrollback can slip past
+    // because their viewport-relative dirty range isn't always emitted.
+    let linesTop: Int
     let kittyStamp: KittyCacheStamp
 }
 
@@ -628,6 +638,7 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                        fontName: terminalView.fontSet.normal.fontName,
                                        fontSize: Double(terminalView.fontSet.normal.pointSize),
                                        isAltBuffer: terminalView.terminal.isCurrentBufferAlternate,
+                                       linesTop: buffer.linesTop,
                                        kittyStamp: kittyStamp)
         let signatureChanged = signature != cacheSignature
         if signatureChanged {

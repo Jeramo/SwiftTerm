@@ -189,6 +189,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     private var activeCommandKeys: Set<UIKeyboardHIDUsage> = []
     private var pointerInteraction: UIPointerInteraction?
     private var hoverGesture: UIHoverGestureRecognizer?
+    // Native pill-style edit menu (iOS 16+). Typed as Any so this file still
+    // compiles against the iOS 14 minimum deployment target; cast at use site.
+    // Named with a `swiftTerm` prefix so subclasses can keep their own
+    // `editMenuInteraction` ivar without colliding (e.g. Pling installs a
+    // second, paste-only interaction near the cursor).
+    private var _swiftTermEditMenuStorage: Any?
+    @available(iOS 16.0, visionOS 1.0, *)
+    var swiftTermEditMenuInteraction: UIEditMenuInteraction? {
+        get { _swiftTermEditMenuStorage as? UIEditMenuInteraction }
+        set { _swiftTermEditMenuStorage = newValue }
+    }
     private var didFinishSetup = false
     var linkHighlightRange: [Terminal.LinkMatch.RowRange]?
     private var lastPointerLocation: CGPoint?
@@ -642,21 +653,37 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     ///  - pos: the location where this was triggered in the buffer, it used at a later point
     ///  to auto-select a word
     func showContextMenu (forRegion: CGRect, pos: Position) {
-        var items: [UIMenuItem] = []
-        
         lastLongSelect = pos
         lastLongSelectRegion = forRegion
 
-        //GAR: Declutter context menu
-        //items.append (UIMenuItem(title: "Reset", action: #selector(resetCmd)))
-        
-        // Configure the shared menu controller
+        if #available(iOS 16.0, visionOS 1.0, *), let interaction = swiftTermEditMenuInteraction {
+            // Native pill-style edit menu (iOS 16+). The presentation point is the
+            // anchor; iOS positions the menu adaptively around it.
+            let anchor = CGPoint(x: forRegion.midX, y: forRegion.minY)
+            let config = UIEditMenuConfiguration(identifier: nil, sourcePoint: anchor)
+            interaction.presentEditMenu(with: config)
+            return
+        }
+
+        // Fallback for iOS 14/15: legacy callout-style menu controller.
         let menuController = UIMenuController.shared
-        menuController.menuItems = items
-        
-        // Set the location of the menu in the view.
-        //let menuLocation = CGRect (origin: at, size: CGSize (width: cellDimension.width, height: cellDimension.height))
+        menuController.menuItems = []
         menuController.showMenu(from: self, rect: forRegion)
+    }
+
+    /// Dismiss whichever edit menu is currently visible (UIEditMenuInteraction
+    /// on iOS 16+, falls back to UIMenuController on older releases). Returns
+    /// `true` if a menu was visible and dismissed.
+    @discardableResult
+    func hideContextMenuIfVisible () -> Bool {
+        if #available(iOS 16.0, visionOS 1.0, *), let interaction = swiftTermEditMenuInteraction {
+            interaction.dismissMenu()
+        }
+        if UIMenuController.shared.isMenuVisible {
+            UIMenuController.shared.hideMenu()
+            return true
+        }
+        return false
     }
     
     // This is a position relative to the buffer
@@ -802,8 +829,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     selection.selectNone()
                     disableSelectionPanGesture()
                 }
-                if UIMenuController.shared.isMenuVisible {
-                    UIMenuController.shared.hideMenu()
+                if hideContextMenuIfVisible() {
+                    // legacy menu was visible and got dismissed; swallow this tap
                 } else {
                     let location = gestureRecognizer.location(in: gestureRecognizer.view)
                     let tapLoc = calculateTapHit(gesture: gestureRecognizer).grid
@@ -1112,6 +1139,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         singleTap.require(toFail: doubleTap)
         doubleTap.require(toFail: tripleTap)
+
+        if #available(iOS 16.0, visionOS 1.0, *) {
+            let editMenu = UIEditMenuInteraction(delegate: self)
+            addInteraction(editMenu)
+            swiftTermEditMenuInteraction = editMenu
+        }
     }
 
     func setupLinkReportingInteractions ()
@@ -2754,7 +2787,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 #endif
             
             if !self.selection.active {
-                UIMenuController.shared.hideMenu()
+                self.hideContextMenuIfVisible()
                 self.selection.selectNone()
                 self.disableSelectionPanGesture()
             }
@@ -2829,7 +2862,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
 // Default implementations for TerminalViewDelegate
 
-extension TerminalViewDelegate {    
+extension TerminalViewDelegate {
     public func bell (source: TerminalView)
     {
         #if os(iOS)
@@ -2837,8 +2870,38 @@ extension TerminalViewDelegate {
         generator.notificationOccurred(.warning)
         #endif
     }
-    
+
     public func iTermContent (source: TerminalView, content: ArraySlice<UInt8>) {
+    }
+}
+
+@available(iOS 16.0, visionOS 1.0, *)
+extension TerminalView: UIEditMenuInteractionDelegate {
+    // These are declared as @objc + open so subclasses (e.g. Pling's
+    // PlingTerminalView, which installs an additional paste-only interaction
+    // near the cursor) can override them to customize per-interaction menus.
+    @objc open func editMenuInteraction(
+        _ interaction: UIEditMenuInteraction,
+        menuFor configuration: UIEditMenuConfiguration,
+        suggestedActions: [UIMenuElement]
+    ) -> UIMenu? {
+        // We rely on the canPerformAction(_:withSender:) gate above, so the
+        // system filters Copy/Paste/Select/Select All to whatever is valid
+        // for the current selection state. Returning suggestedActions here
+        // gives us the standard iOS pill menu with localized titles.
+        return UIMenu(children: suggestedActions)
+    }
+
+    @objc open func editMenuInteraction(
+        _ interaction: UIEditMenuInteraction,
+        targetRectFor configuration: UIEditMenuConfiguration
+    ) -> CGRect {
+        // Prefer the region around the active selection so the menu floats
+        // above the highlighted text instead of the raw tap point.
+        if selection.active {
+            return makeContextMenuRegionForSelection()
+        }
+        return lastLongSelectRegion
     }
 }
 

@@ -1710,6 +1710,31 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             terminal.backgroundColor = nativeBackgroundColor.getTerminalColor ()
             colorsChanged()
             settingBg = false
+            applyAutomaticKeyboardAppearance()
+        }
+    }
+
+    /// Pick `.dark` keyboard appearance for dark terminal backgrounds
+    /// so the keyboard matches the theme instead of flashing a light
+    /// keyboard against a dark Solarized/Dracula/etc. terminal. iOS
+    /// caches keyboard traits at presentation, so call reloadInputViews
+    /// when we're first responder to force the live keyboard to refresh
+    /// (a no-op when the keyboard isn't currently up).
+    private func applyAutomaticKeyboardAppearance() {
+        guard automaticKeyboardAppearance else { return }
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard _nativeBg.getRed(&r, green: &g, blue: &b, alpha: &a) else { return }
+        // Rec. 601 luminance — same weighting iOS uses for accessibility
+        // contrast checks. Threshold of 0.45 picks `.dark` for every
+        // common "dark" terminal theme (Solarized Dark, Dracula, One
+        // Dark, Tomorrow Night) without misclassifying Solarized Light.
+        let luma = 0.299 * r + 0.587 * g + 0.114 * b
+        let derived: UIKeyboardAppearance = luma < 0.45 ? .dark : .default
+        if keyboardAppearance != derived {
+            keyboardAppearance = derived
+            if isFirstResponder {
+                reloadInputViews()
+            }
         }
     }
 
@@ -2146,6 +2171,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     public var keyboardAppearance: UIKeyboardAppearance = .`default`
+    /// When true (default), the keyboard appearance auto-tracks
+    /// `nativeBackgroundColor`: dark terminal backgrounds (Solarized
+    /// Dark, Dracula, etc.) get `.dark`; light backgrounds fall back
+    /// to `.default` (which itself tracks the system trait collection).
+    /// Hosts that want pinned keyboardAppearance can flip this off.
+    public var automaticKeyboardAppearance: Bool = true
     public var returnKeyType: UIReturnKeyType = .`default`
     
     // This is wrong, but I can not find another good one

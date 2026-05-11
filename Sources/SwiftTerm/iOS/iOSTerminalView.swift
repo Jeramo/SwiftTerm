@@ -602,6 +602,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// because nothing nudged the renderer. Hosts call this on un-hide.
     public func forceRedraw()
     {
+        // Re-fire the size pipeline. If bounds changed since the last
+        // layoutSubviews-driven processSizeChange (or never fired with the
+        // current bounds), this catches the case where the bridge has been
+        // waiting on a sizeChanged delegate with >= reasonable cols/rows.
+        // Symptom this defends against: terminal opens at MINIMUM(2,1) from
+        // a tiny initial frame, bridge's pendingData queues up because
+        // ForwardingCoordinator.sizeChanged gates on newCols >= 10, and
+        // nothing re-fires the delegate until the user triggers a layout
+        // change (typically by summoning the keyboard).
+        processSizeChange(newSize: bounds.size)
         terminal.updateFullScreen()
         queuePendingDisplay()
         #if canImport(MetalKit)

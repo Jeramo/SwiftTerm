@@ -41,10 +41,14 @@ extension NSColor {
         fg.getRed(&fRed, green: &fGreen, blue: &fBlue, alpha: &fAlpha)
         var bRed: CGFloat = 0.0, bGreen: CGFloat = 0.0, bBlue: CGFloat = 0.0, bAlpha: CGFloat = 1.0
         bg.getRed(&bRed, green: &bGreen, blue: &bBlue, alpha: &bAlpha)
+        // Force alpha = 1.0 to match the documented invariant. Was: fAlpha,
+        // which silently preserved any translucency on the foreground and
+        // produced visible seams between adjacent box-drawing cells if any
+        // upstream code ever set a translucent fg.
         return NSColor (deviceRed: (fRed + bRed) * 0.5,
                         green: (fGreen + bGreen) * 0.5,
                         blue: (fBlue + bBlue) * 0.5,
-                        alpha: fAlpha)
+                        alpha: 1.0)
     }
 
     static func make (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) -> NSColor

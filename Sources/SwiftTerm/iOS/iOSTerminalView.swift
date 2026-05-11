@@ -1758,6 +1758,26 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // delegate (e.g. Pling's ForwardingCoordinator) flushes
         // immediately.
         guard window != nil else { return }
+
+        // SAFETY NET: if terminal.cols is suspiciously small (< 10), the
+        // local terminal somehow got stuck at near-MINIMUM despite the
+        // 80x25 init default and processSizeChange. This persists across
+        // tab switches and the user sees Claude Code rendered at 2 cols
+        // wide — one character per row. Bypass processSizeChange's
+        // sizeChanged-only-when-different gate and FORCE a terminal.resize
+        // to the bounds-derived dimensions if we have non-zero bounds. The
+        // host's bridge will pick up the new size via the explicit
+        // sizeChanged below.
+        if terminal.cols < 10,
+           bounds.width > 0, bounds.height > 0,
+           cellDimension.width > 0, cellDimension.height > 0 {
+            let derivedCols = Int(bounds.width / cellDimension.width)
+            let derivedRows = Int(bounds.height / cellDimension.height)
+            if derivedCols >= 10 && derivedRows >= 2 {
+                terminal.resize(cols: derivedCols, rows: derivedRows)
+            }
+        }
+
         forceRedraw()
 
         // Two-step repaint: clear the local visible viewport, then ask the

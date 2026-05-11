@@ -123,7 +123,10 @@ class KeyboardView: UIView {
                 case "&": makeButton ("&", #selector (amp))
                 case "i": makeButton ("ins", #selector (insert), isNormal: false)
                 case "h": makeButton ("home", #selector (home), isNormal: false)
-                case "p": makeButton ("pgup", #selector (pageDown), isNormal: false)
+                // Was wired to #selector(pageDown) — the "pgup" label was
+                // a lie that's been shipping for a while. Page Up sends
+                // CSI 5~ via EscapeSequences.cmdPageUp.
+                case "p": makeButton ("pgup", #selector (pageUp), isNormal: false)
                 case "+": makeButton ("+", #selector(plus))
                 case "-": makeButton ("-", #selector(minus))
                 case "*": makeButton ("*", #selector(star))

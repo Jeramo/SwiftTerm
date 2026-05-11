@@ -301,6 +301,15 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         // The view already updates drawableSize; avoid feedback loops.
     }
 
+    /// Drop the per-row cache so the next frame rebuilds every visible
+    /// row from scratch. Hosts call this on un-hide paths where the
+    /// underlying buffer state may have shifted out from under cached
+    /// vertex/UV buffers (e.g. opening a backgrounded session from a
+    /// carousel detail view).
+    func invalidateRowCache() {
+        rowCache.removeAll()
+    }
+
     func draw(in view: MTKView) {
 #if canImport(os)
         let drawID = OSSignpostID(log: MetalTerminalRenderer.profileLog)

@@ -532,13 +532,18 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         terminal.updateFullScreen()
         queuePendingDisplay()
         #if canImport(MetalKit)
+        // Drop the renderer's per-row cache so the next draw rebuilds
+        // every visible row. The dirty-range seed below alone isn't
+        // sufficient on a re-entry path where the buffer state shifted
+        // while the view was hidden but the rowCache still references
+        // stale vertex/UV buffers from before. Without this, the user
+        // sees a single stale cell (typically the cursor cell at the
+        // pre-hide cursor position) until they force another redraw.
+        metalRenderer?.invalidateRowCache()
         // Populate metalDirtyRange synchronously so the next Metal draw
-        // (which fires from MTKView's own display link, independent of our
-        // step()) rebuilds every visible row instead of reusing stale
-        // rowCache entries. Without this, the renderer can land before
-        // updateDisplay() has had a chance to merge the dirty range, and
-        // host un-hide paints the screen from cache except for the single
-        // cell the cursor just touched.
+        // (which fires from MTKView's own display link, independent of
+        // our step()) covers every visible row even if step() lands
+        // after the first draw.
         metalDirtyRange = metalVisibleRange()
         requestMetalDisplay()
         #endif

@@ -1345,9 +1345,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
             return
         }
-        if !force && !commandActive && !modifiers.contains(.command) && linkHighlightMode == .hoverWithModifier {
-            return
-        }
+        // (Was: an unreachable guard here that checked the same condition
+        // the block above already returned on — `.hoverWithModifier && !modifier`.
+        // Removed.)
         let hit = calculateTapHit(point: point).grid
         let match = terminal.linkMatch(at: .buffer(hit), mode: .explicitAndImplicit)
         let newRange = match?.rowRanges

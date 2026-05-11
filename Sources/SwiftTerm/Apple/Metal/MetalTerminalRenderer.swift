@@ -2655,13 +2655,20 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         if shouldBlink {
             if cursorBlinkTimer == nil {
                 cursorBlinkOn = true
-                cursorBlinkTimer = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: true) { [weak self] _ in
+                // Timer.scheduledTimer attaches in .default mode, which is
+                // suspended during UITrackingRunLoopMode — the cursor blink
+                // would freeze the moment the user starts dragging to
+                // scroll. Build with init() + RunLoop.main.add(forMode:
+                // .common) so it stays alive through user interaction.
+                let timer = Timer(timeInterval: 0.7, repeats: true) { [weak self] _ in
                     guard let self = self, let view = self.view else {
                         return
                     }
                     self.cursorBlinkOn.toggle()
                     view.setNeedsDisplay(view.bounds)
                 }
+                cursorBlinkTimer = timer
+                RunLoop.main.add(timer, forMode: .common)
             }
         } else if let timer = cursorBlinkTimer {
             timer.invalidate()

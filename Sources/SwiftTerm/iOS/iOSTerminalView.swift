@@ -1291,10 +1291,48 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     lastSelectionHapticPos = hit
                 }
                 gestureRecognizer.setTranslation(CGPoint.zero, in: self)
-                if absoluteY < 0 || absoluteY > bounds.height {
-                    startSelectionTimer {
-                        let newPlace = CGRect (x: 0, y: max (0, self.contentOffset.y+absoluteY), width: self.bounds.width, height: self.bounds.height)
-                        self.scrollRectToVisible(newPlace, animated: true)
+                // Edge-zone auto-scroll: when the finger gets within
+                // ~1.5 cells of the top or bottom edge, scroll the
+                // content past the finger so the user can extend the
+                // selection beyond the viewport — the same behavior
+                // UITextView gives in Safari/Notes. Previously this
+                // only triggered when the finger was *completely* off
+                // the view (absoluteY < 0 || > bounds.height), which
+                // made multi-screen selections fiddly. Speed scales
+                // with overshoot so the deeper the finger goes into
+                // the edge zone (and past), the faster the scroll.
+                let edgeZone = max(cellDimension.height * 1.5, 24)
+                let overshootTop = edgeZone - absoluteY
+                let overshootBottom = absoluteY - (bounds.height - edgeZone)
+                if overshootTop > 0 || overshootBottom > 0 {
+                    let direction: CGFloat = overshootTop > 0 ? -1 : 1
+                    let overshoot = max(overshootTop, overshootBottom)
+                    // Cap per-tick scroll at ~3 cells so a finger
+                    // pinned hard against the edge doesn't fly past
+                    // hundreds of lines per second.
+                    let perTick = min(overshoot, edgeZone * 2) * 0.5
+                    let scrollDelta = direction * perTick
+                    let pan = gestureRecognizer
+                    startSelectionTimer { [weak self] in
+                        guard let self = self else { return }
+                        let maxOffsetY = max(0, self.contentSize.height - self.bounds.height)
+                        let targetY = min(maxOffsetY,
+                                          max(0, self.contentOffset.y + scrollDelta))
+                        guard targetY != self.contentOffset.y else { return }
+                        self.contentOffset = CGPoint(x: 0, y: targetY)
+                        // After scrolling, the same finger screen
+                        // position maps to a different grid cell —
+                        // re-extend so the selection follows. Without
+                        // this, the selection endpoint stops at
+                        // whatever cell was under the finger before
+                        // the timer kicked in.
+                        let newHit = self.calculateTapHit(gesture: pan).grid
+                        self.selection.pivotExtend(bufferPosition: newHit)
+                        if self.lastSelectionHapticPos != newHit {
+                            self.selectionHaptics.selectionChanged()
+                            self.lastSelectionHapticPos = newHit
+                        }
+                        self.requestDisplay()
                     }
                 }
                 requestDisplay()

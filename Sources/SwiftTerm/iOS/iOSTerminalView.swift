@@ -2556,7 +2556,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                         if !isModifierKey {
                             keyRepeat = Timer(fire: Date(timeInterval: 0.4, since: Date()),
                                               interval: 0.1,
-                                              repeats: true) { _ in
+                                              repeats: true) { [weak self] _ in
+                                guard let self else { return }
                                 let repeatEvent = KittyKeyEvent(key: .functional(functionKey),
                                                                 modifiers: modifiers,
                                                                 eventType: repeatEventType,
@@ -2566,7 +2567,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                                                                 composing: self.kittyIsComposing)
                                 _ = self.sendKittyEvent(repeatEvent)
                             }
-                            RunLoop.current.add(keyRepeat!, forMode: .default)
+                            // .common, not .default — same UITrackingRunLoopMode
+                            // gotcha as the CADisplayLink: in .default mode the
+                            // repeat timer pauses while the user is scrolling,
+                            // which silently kills auto-repeat mid-drag.
+                            RunLoop.current.add(keyRepeat!, forMode: .common)
                         }
                     }
                     continue
@@ -2579,7 +2584,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                         keyRepeat?.invalidate()
                         keyRepeat = Timer(fire: Date(timeInterval: 0.4, since: Date()),
                                           interval: 0.1,
-                                          repeats: true) { _ in
+                                          repeats: true) { [weak self] _ in
+                            guard let self else { return }
                             let repeatEvent = KittyKeyEvent(key: kittyEvent.key,
                                                             modifiers: modifiers,
                                                             eventType: repeatEventType,
@@ -2589,7 +2595,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                                                             composing: self.kittyIsComposing)
                             _ = self.sendKittyEvent(repeatEvent)
                         }
-                        RunLoop.current.add(keyRepeat!, forMode: .default)
+                        RunLoop.current.add(keyRepeat!, forMode: .common)
                         continue
                     }
                 }
@@ -2730,10 +2736,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 keyRepeat?.invalidate()
                 keyRepeat = Timer (fire: Date(timeInterval: 0.4, since: Date()),
                                    interval: 0.1,
-                                   repeats: true) { timer in
-                    self.sendData(data: sendableData)
+                                   repeats: true) { [weak self] _ in
+                    self?.sendData(data: sendableData)
                 }
-                RunLoop.current.add(keyRepeat!, forMode: .default)
+                // .common, not .default. Matches the kitty-keyboard repeat
+                // timers above and the display link — keeps auto-repeat alive
+                // while the user is dragging to scroll.
+                RunLoop.current.add(keyRepeat!, forMode: .common)
                 sendData (data: sendableData)
             }
         }

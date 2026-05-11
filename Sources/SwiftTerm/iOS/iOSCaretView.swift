@@ -70,18 +70,32 @@ class CaretView: UIView {
         // between, or with two non-nil transitions back to back) would
         // stack duplicate observer registrations — each foreground
         // notification would then fire `foreground` N times.
-        let name = NSNotification.Name(rawValue: UIApplication.willEnterForegroundNotification.rawValue)
-        NotificationCenter.default.removeObserver(self, name: name, object: nil)
+        let foregroundName = NSNotification.Name(rawValue: UIApplication.willEnterForegroundNotification.rawValue)
+        let reduceMotionName = UIAccessibility.reduceMotionStatusDidChangeNotification
+        NotificationCenter.default.removeObserver(self, name: foregroundName, object: nil)
+        NotificationCenter.default.removeObserver(self, name: reduceMotionName, object: nil)
         if window != nil {
-            NotificationCenter.default.addObserver(self, selector: #selector(foreground), name: name, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(foreground), name: foregroundName, object: nil)
+            // Re-evaluate the blink whenever Reduce Motion toggles in
+            // Settings while the app is running.
+            NotificationCenter.default.addObserver(self, selector: #selector(handleReduceMotionChange), name: reduceMotionName, object: nil)
         }
         updateCursorStyle ();
     }
-    
+
+    @objc private func handleReduceMotionChange() {
+        updateCursorStyle()
+    }
+
     func updateAnimation (to: Bool) {
         layer.removeAllAnimations()
         self.layer.opacity = 1
         if window == nil {
+            return
+        }
+        // Respect the user's accessibility preference. Reduce Motion users
+        // want a solid cursor like native UITextView, not a fading one.
+        if UIAccessibility.isReduceMotionEnabled {
             return
         }
         if to {

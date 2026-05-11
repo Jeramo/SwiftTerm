@@ -698,10 +698,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             selection.selectWordOrExpression(at: Position (col: loc.col, row: loc.row), in: terminal.displayBuffer)
             selection.selectionMode = .character
             enableSelectionPanGesture()
-            DispatchQueue.main.async {
-                self.showContextMenu(forRegion:  self.makeContextMenuRegionForSelection(), pos: loc)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.showContextMenu(forRegion: self.makeContextMenuRegionForSelection(), pos: loc)
             }
-            
         }
         lastLongSelect = nil
     }
@@ -2913,12 +2913,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return
         }
         pendingSelectionChanged = true
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
             self.pendingSelectionChanged = false
-            
+
             self.inputDelegate?.selectionWillChange (self)
             self.inputDelegate?.selectionDidChange(self)
- 
+
 #if canImport(MetalKit)
             if self.metalView != nil {
                 self.metalDirtyRange = self.metalVisibleRange()
@@ -2929,7 +2930,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 #else
             self.setNeedsDisplay(self.bounds)
 #endif
-            
+
             if !self.selection.active {
                 self.hideContextMenuIfVisible()
                 self.selection.selectNone()
@@ -2958,14 +2959,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     open func setTerminalTitle(source: Terminal, title: String) {
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
             self.terminalDelegate?.setTerminalTitle(source: self, title: title)
         }
     }
-  
+
     open func sizeChanged(source: Terminal) {
-        DispatchQueue.main.async {
-            self.terminalDelegate?.sizeChanged(source: self, newCols: source.cols, newRows: source.rows)
+        // Capture cols/rows BEFORE the async hop so we don't read them off a
+        // Terminal whose dimensions changed again in the meantime.
+        let cols = source.cols
+        let rows = source.rows
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.terminalDelegate?.sizeChanged(source: self, newCols: cols, newRows: rows)
             self.updateScroller()
         }
     }

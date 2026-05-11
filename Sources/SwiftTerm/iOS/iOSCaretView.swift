@@ -65,10 +65,15 @@ class CaretView: UIView {
     }
     
     override func didMoveToWindow() {
+        // Always remove first. Without this, a view-pool recycle path that
+        // re-attaches the same caret to a new window (without a nil pass in
+        // between, or with two non-nil transitions back to back) would
+        // stack duplicate observer registrations — each foreground
+        // notification would then fire `foreground` N times.
+        let name = NSNotification.Name(rawValue: UIApplication.willEnterForegroundNotification.rawValue)
+        NotificationCenter.default.removeObserver(self, name: name, object: nil)
         if window != nil {
-            NotificationCenter.default.addObserver(self, selector: #selector(foreground), name: NSNotification.Name(rawValue: UIApplication.willEnterForegroundNotification.rawValue), object: nil)
-        } else {
-            NotificationCenter.default.removeObserver(self,  name: NSNotification.Name(rawValue: UIApplication.willEnterForegroundNotification.rawValue), object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(foreground), name: name, object: nil)
         }
         updateCursorStyle ();
     }

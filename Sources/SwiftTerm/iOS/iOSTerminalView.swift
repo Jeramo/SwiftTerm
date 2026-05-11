@@ -367,6 +367,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // is removed during selection), so this composes cleanly with the
         // selection drag work.
         keyboardDismissMode = .interactive
+        // UIScrollView delays touch-down events to content by ~150ms so it
+        // can decide whether the touch is scroll-intent. For a terminal,
+        // every cell is content and the scroll view's pan still cancels
+        // tap/long-press once the finger actually moves, so the delay is
+        // pure tap latency. Removing it makes selection long-press and
+        // link-tap feel as responsive as native UITextView.
+        delaysContentTouches = false
         // Prevent iOS from auto-adjusting content insets for the keyboard,
         // which fights with updateScroller() and causes jitter during
         // swipe-to-type (QuickPath) input.

@@ -354,8 +354,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
           
     func setup()
     {
-        showsHorizontalScrollIndicator = true
-        indicatorStyle = .white
+        // Terminal cols are fixed by the view's width; a horizontal indicator
+        // would never animate and only adds visual noise on first paint.
+        showsHorizontalScrollIndicator = false
+        // .white was hard-coded and looks wrong against light themes. .default
+        // tracks the current trait collection so it stays legible whether the
+        // user picks a dark or light terminal palette.
+        indicatorStyle = .default
+        // Native Messages/Mail-style swipe-down on the content to dismiss the
+        // keyboard. The scroll view's built-in pan recognizer only fires when
+        // SwiftTerm isn't actively extending a selection (panSelectionGesture
+        // is removed during selection), so this composes cleanly with the
+        // selection drag work.
+        keyboardDismissMode = .interactive
         // Prevent iOS from auto-adjusting content insets for the keyboard,
         // which fights with updateScroller() and causes jitter during
         // swipe-to-type (QuickPath) input.

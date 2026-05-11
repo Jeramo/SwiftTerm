@@ -341,13 +341,28 @@ extension TerminalView: UITextInput {
     }
             
     public func firstRect(for range: UITextRange) -> CGRect {
+        // iOS uses firstRect to position the dictation indicator and the
+        // autocorrect popup. Returning the entire view's bounds floated those
+        // affordances over arbitrary screen real estate. The cursor's cell
+        // (tracked by AppleTerminalView.updateCursorPosition) is the best
+        // single-rect approximation we have, since SwiftTerm doesn't expose
+        // the IME composition as iOS-text geometry.
+        if let caretFrame = caretView?.frame, !caretFrame.isNull, caretFrame != .zero {
+            return caretFrame
+        }
         return bounds
     }
-    
+
     public func caretRect(for position: UITextPosition) -> CGRect {
+        // Same rationale as firstRect — anchor the system caret UI (popup
+        // bubbles, dictation cursor, Slide-to-Type predictions) over the
+        // actual cell the terminal cursor sits on, not over the whole view.
+        if let caretFrame = caretView?.frame, !caretFrame.isNull, caretFrame != .zero {
+            return caretFrame
+        }
         return bounds
     }
-    
+
     public func selectionRects(for range: UITextRange) -> [UITextSelectionRect] {
         guard let r = range as? TextRange else { return [] }
         return [TextSelectionRect(rect: bounds, range: r, string: textInputStorage)]

@@ -230,6 +230,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         set { _swiftTermEditMenuStorage = newValue }
     }
     private var didFinishSetup = false
+
+    /// Pinch-to-zoom: when true, a two-finger pinch on the terminal
+    /// resizes the font live (like Terminus, Blink, iTerm-mobile).
+    /// Hosts that want their own pinch handling can flip this off.
+    public var pinchToZoomEnabled: Bool = true
+    /// Bounds for the live-pinch font size. Picked to match what's readable
+    /// on iPhone (~8pt) without exploding cell count, and what stays
+    /// usable on iPad (~32pt) without making the terminal feel like a
+    /// large-type accessory.
+    public var pinchMinimumFontSize: CGFloat = 8
+    public var pinchMaximumFontSize: CGFloat = 32
+    private var pinchBaseFontSize: CGFloat = 0
+    private var pinchLastAppliedSize: CGFloat = 0
+    private weak var pinchGesture: UIPinchGestureRecognizer?
     var linkHighlightRange: [Terminal.LinkMatch.RowRange]?
     private var lastPointerLocation: CGPoint?
     
@@ -1286,6 +1300,60 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             let editMenu = UIEditMenuInteraction(delegate: self)
             addInteraction(editMenu)
             swiftTermEditMenuInteraction = editMenu
+        }
+
+        if pinchToZoomEnabled {
+            let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handleFontPinch(_:)))
+            // Pinch coexists with the inherited UIScrollView pan and our
+            // selection long-press — UIKit auto-disambiguates by touch
+            // count (pinch requires 2 simultaneous touches, long-press is
+            // single-finger). Leave cancelsTouchesInView at its default
+            // false so a quick brush by a second finger doesn't eat a
+            // legitimate single-finger tap.
+            pinch.cancelsTouchesInView = false
+            addGestureRecognizer(pinch)
+            pinchGesture = pinch
+        }
+    }
+
+    @objc private func handleFontPinch(_ g: UIPinchGestureRecognizer) {
+        switch g.state {
+        case .began:
+            pinchBaseFontSize = font.pointSize
+            pinchLastAppliedSize = pinchBaseFontSize
+            // Prime the haptic so the first selectionChanged() at a
+            // size-step boundary fires without the cold-start delay.
+            selectionHaptics.prepare()
+        case .changed:
+            guard pinchBaseFontSize > 0 else { return }
+            let raw = pinchBaseFontSize * g.scale
+            let clamped = min(max(raw, pinchMinimumFontSize), pinchMaximumFontSize)
+            // Quantize to half-point steps. Without quantization we'd
+            // rebuild the FontSet + reflow the buffer on every gesture
+            // .changed tick (60-120Hz) — animatable but wasteful, and
+            // each font reflow currently clears the selection. 0.5pt is
+            // small enough to feel continuous and large enough to keep
+            // the reflow rate sane.
+            let stepped = (clamped * 2).rounded() / 2
+            if abs(stepped - pinchLastAppliedSize) >= 0.5 {
+                pinchLastAppliedSize = stepped
+                font = font.withSize(stepped)
+                selectionHaptics.selectionChanged()
+            }
+        case .ended, .cancelled, .failed:
+            // Settle to a whole-point size so the rendered glyphs land on
+            // pixel boundaries (avoids the slight subpixel blur half-point
+            // sizes can produce on certain monospace faces).
+            if pinchBaseFontSize > 0 {
+                let settled = pinchLastAppliedSize.rounded()
+                if abs(settled - font.pointSize) >= 0.5 {
+                    font = font.withSize(settled)
+                }
+            }
+            pinchBaseFontSize = 0
+            pinchLastAppliedSize = 0
+        default:
+            break
         }
     }
 

@@ -2494,7 +2494,36 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func ensureCaretIsVisible ()
     {
         let displayBuffer = terminal.displayBuffer
-        contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
+        let rawTargetY = CGFloat(displayBuffer.lines.count - displayBuffer.rows) * cellDimension.height
+        let target = CGPoint(x: 0, y: max(0, rawTargetY))
+        let delta = abs(contentOffset.y - target.y)
+        // Already at the bottom (within a sub-pixel) — skip the assignment
+        // entirely. UIScrollView's contentOffset setter goes through layout
+        // even when the value is unchanged, and on the hot keystroke path
+        // that adds up to a measurable layout cost per character typed.
+        if delta < 0.5 {
+            return
+        }
+        // User is actively dragging or fling-decelerating the scrollback —
+        // don't fight their gesture. Native terminals defer the
+        // snap-to-prompt until the user lets go. Without this, a keystroke
+        // mid-drag teleports the content under the user's finger.
+        if isDragging || isDecelerating {
+            contentOffset = target
+            return
+        }
+        // Bigger jump: smooth-animate so it doesn't look like a teleport.
+        // Matches the ~180ms ease-out UITextView uses when typing pushes
+        // the caret off-screen. Reduce Motion users get the instant jump.
+        if delta > cellDimension.height * 0.5 && !UIAccessibility.isReduceMotionEnabled {
+            UIView.animate(withDuration: 0.18,
+                           delay: 0,
+                           options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction]) {
+                self.contentOffset = target
+            }
+        } else {
+            contentOffset = target
+        }
     }
     
     public func deleteBackward() {

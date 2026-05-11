@@ -1736,6 +1736,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         drawTerminalContents (dirtyRect: dirtyRect, context: context, bufferOffset: 0)
     }
+    private var hasSentFirstWindowRedrawKick = false
+
     open override func didMoveToWindow() {
         super.didMoveToWindow()
         guard didFinishSetup else { return }
@@ -1749,8 +1751,28 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // dropped, and nothing re-triggered. forceRedraw also re-fires
         // sizeChanged so any host buffering pendingData on a missed delegate
         // (e.g. Pling's ForwardingCoordinator) flushes immediately.
-        if window != nil {
-            forceRedraw()
+        guard window != nil else { return }
+        forceRedraw()
+
+        // Send a single Ctrl-L (form feed, 0x0C) to the remote shell once,
+        // after the first window-attach has settled. This kicks tmux,
+        // zellij, vim, and most interactive shells to redraw their visible
+        // viewport into the now-final size — fixing the artifact where any
+        // pre-final-size render of tmux's status bar (or other UI) sticks
+        // around because tmux only repaints rows it explicitly touches and
+        // the buffer reshape padded the original narrow render with blanks.
+        // Single-shot via a flag so re-entering the window later (split-
+        // view re-parent, etc.) doesn't keep nuking the visible state.
+        if !hasSentFirstWindowRedrawKick {
+            hasSentFirstWindowRedrawKick = true
+            // Defer a beat so the bridge's debounced sendResize has time
+            // to push the proper PTY size upstream first; otherwise the
+            // remote redraw races the resize and re-renders at the old
+            // size.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                guard let self = self, self.window != nil else { return }
+                self.send([0x0C])
+            }
         }
     }
 

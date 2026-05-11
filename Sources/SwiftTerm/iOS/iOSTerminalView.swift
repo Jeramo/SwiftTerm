@@ -1086,6 +1086,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 } else {
                     selection.pivot = selection.start
                 }
+                // UITextView hides the floating Copy/Paste pill the moment
+                // the user starts dragging a handle and re-shows it when
+                // they let go. Without this, the menu hovers over the old
+                // selection rect throughout the drag, which looks broken
+                // once the handle has clearly moved past it.
+                hideContextMenuIfVisible()
                 grabHaptic.impactOccurred()
                 selectionHaptics.prepare()
                 lastSelectionHapticPos = hit

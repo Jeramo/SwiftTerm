@@ -32,6 +32,21 @@ public extension Notification.Name {
     static let terminalViewMetaModifierReset = Notification.Name("SwiftTerm.TerminalView.metaModifierReset")
 }
 
+/// Weak proxy that forwards CADisplayLink callbacks. CADisplayLink retains
+/// its target strongly (Apple docs: "the object automatically retains the
+/// specified target"), so a TerminalView used as the direct target gets
+/// pinned alive forever — its deinit never fires and `updateUiClosed()`
+/// has no callers in the SwiftTerm sources or in pling-ios. With this
+/// proxy in between, the link retains the proxy and the proxy holds a
+/// weak ref to the view; deinit can fire, invalidate the link from there.
+private final class DisplayLinkTarget: NSObject {
+    weak var view: TerminalView?
+    init(view: TerminalView) { self.view = view }
+    @objc func step(displaylink: CADisplayLink) {
+        view?.step(displaylink: displaylink)
+    }
+}
+
 /**
  * TerminalView provides an AppKit/UIKit front-end to the `Terminal` terminal emulator.
  * It is up to a subclass to either wire the terminal emulator to a remote terminal
@@ -476,9 +491,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 #endif
 
+    /// Held strongly so the CADisplayLink (which retains its target) has a
+    /// stable proxy object across the view's lifetime. The proxy holds a
+    /// weak ref back to self, so this class itself is *not* retained by
+    /// the runloop and deinit can fire normally.
+    private var displayLinkTarget: AnyObject?
+
     func setupDisplayUpdates ()
     {
-        link = CADisplayLink(target: self, selector: #selector(step))
+        let proxy = DisplayLinkTarget(view: self)
+        self.displayLinkTarget = proxy
+        link = CADisplayLink(target: proxy, selector: #selector(DisplayLinkTarget.step(displaylink:)))
         if #available(iOS 15.0, visionOS 1.0, *) {
             link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
         }
@@ -619,7 +642,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     public func updateUiClosed() {
-        self.link.invalidate()
+        // Idempotent: invalidate() on an already-invalidated link is a
+        // no-op. Don't nil out `link` — other code paths (queuePendingDisplay,
+        // step) read it and the IUO would crash; CADisplayLink ignores
+        // isPaused / add(to:forMode:) calls after invalidation.
+        self.link?.invalidate()
+    }
+
+    deinit {
+        // With the DisplayLinkTarget proxy in place, the runloop no longer
+        // retains us — so deinit is now reachable on view tear-down. Still
+        // release the link explicitly so the runloop releases the proxy
+        // immediately instead of waiting on the next tick.
+        link?.invalidate()
     }
     
     @objc open override func paste (_ sender: Any?) {

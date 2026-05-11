@@ -482,7 +482,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         if #available(iOS 15.0, visionOS 1.0, *) {
             link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
         }
-        link.add(to: .current, forMode: .default)
+        // .common, not .default. The default mode is suspended when the
+        // runloop switches to UITrackingRunLoopMode during UIScrollView
+        // drag-tracking, which froze the terminal mid-scroll — cursor blink
+        // and streaming output stopped redrawing until the user released.
+        // .common is the union of .default + .tracking (+ others), so the
+        // link keeps firing through user interaction the way UITextView
+        // and UICollectionView's internal display links do.
+        link.add(to: .current, forMode: .common)
         suspendDisplayUpdates()
     }
 

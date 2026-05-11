@@ -1037,31 +1037,34 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var panTask: Task<(),Never>?
     
     @objc func panSelectionHandler (_ gestureRecognizer: UIPanGestureRecognizer) {
-        func near (_ pos1: Position, _ pos2: Position) -> Bool {
-            return abs (pos1.col-pos2.col) < 3 && abs (pos1.row-pos2.row) < 2
+        // Rank distance with row weighted heavily so a touch one row away
+        // beats a touch in the same row but ten columns away.
+        func distance (_ a: Position, _ b: Position) -> Int {
+            return abs(a.row - b.row) * 1000 + abs(a.col - b.col)
         }
-        
+
         switch gestureRecognizer.state {
         case .began:
             let hit = calculateTapHit(gesture: gestureRecognizer).grid
             if selection.active {
-                var extend = false
-                if near (selection.start, hit) {
+                // Anchor the FARTHER endpoint as the pivot so the closer one
+                // tracks the finger. Without this, dragging from anywhere
+                // outside the previous near-3-col/2-row window was a no-op
+                // because the pivot was never set, and pivotExtend() returns
+                // early on a nil pivot. With this, the user can extend the
+                // selection by dragging from anywhere on screen — matching
+                // how UITextView's drag-to-extend feels in Safari/Notes.
+                if distance(selection.start, hit) <= distance(selection.end, hit) {
                     selection.pivot = selection.end
-                    extend = true
-                } else if near (selection.end, hit) {
+                } else {
                     selection.pivot = selection.start
-                    extend = true
                 }
-                if extend {
-                    // User grabbed a selection handle — tactile confirmation.
-                    grabHaptic.impactOccurred()
-                    selectionHaptics.prepare()
-                    lastSelectionHapticPos = hit
-                    selection.pivotExtend(bufferPosition: hit)
-                    requestDisplay()
-                    break
-                }
+                grabHaptic.impactOccurred()
+                selectionHaptics.prepare()
+                lastSelectionHapticPos = hit
+                selection.pivotExtend(bufferPosition: hit)
+                requestDisplay()
+                break
             }
             panStart = hit
             lastSelectionHapticPos = nil
@@ -2926,11 +2929,13 @@ extension TerminalView: UIEditMenuInteractionDelegate {
         _ interaction: UIEditMenuInteraction,
         targetRectFor configuration: UIEditMenuConfiguration
     ) -> CGRect {
-        // Prefer the region around the active selection so the menu floats
-        // above the highlighted text instead of the raw tap point.
-        if selection.active {
-            return makeContextMenuRegionForSelection()
-        }
+        // Every call site of showContextMenu(forRegion:pos:) sets
+        // lastLongSelectRegion to the right rect already (tap point for
+        // long-press, selection rect for double/triple-tap and drag-end).
+        // Honor that verbatim — previously we second-guessed the caller and
+        // returned the selection rect whenever selection.active, which
+        // floated the menu over the *old* selection when the user
+        // long-pressed somewhere else entirely.
         return lastLongSelectRegion
     }
 }

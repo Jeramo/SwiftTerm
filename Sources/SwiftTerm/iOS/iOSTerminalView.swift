@@ -3189,7 +3189,44 @@ extension TerminalView: UIEditMenuInteractionDelegate {
         // system filters Copy/Paste/Select/Select All to whatever is valid
         // for the current selection state. Returning suggestedActions here
         // gives us the standard iOS pill menu with localized titles.
-        return UIMenu(children: suggestedActions)
+        var actions = suggestedActions
+        if let selectedText = getSelection(), !selectedText.isEmpty {
+            // Native iOS apps surface a Share entry whenever there's a text
+            // selection (Notes, Safari, Mail). The terminal didn't, so users
+            // had to Copy → switch apps → paste into a Share UI. With this
+            // they get the standard UIActivityViewController one tap deep,
+            // matching the rest of the OS.
+            let shareImage = UIImage(systemName: "square.and.arrow.up")
+            let share = UIAction(title: "Share…", image: shareImage) { [weak self] _ in
+                self?.presentSelectionShareSheet(selectedText)
+            }
+            actions.append(share)
+        }
+        return UIMenu(children: actions)
+    }
+
+    private func presentSelectionShareSheet(_ text: String) {
+        let activity = UIActivityViewController(activityItems: [text], applicationActivities: nil)
+        // iPad/regular-width: required popover anchor, otherwise UIKit
+        // throws at presentation time. Anchor to the same rect the edit
+        // menu was positioned over so the share sheet pops out from the
+        // selection naturally.
+        if let popover = activity.popoverPresentationController {
+            popover.sourceView = self
+            popover.sourceRect = lastLongSelectRegion
+            popover.permittedArrowDirections = [.up, .down]
+        }
+        // Walk the responder chain to the nearest presenting view
+        // controller. UIScrollView doesn't have a -presentViewController
+        // entry point of its own; we need the owning UIViewController.
+        var responder: UIResponder? = self
+        while let r = responder {
+            if let vc = r as? UIViewController {
+                vc.present(activity, animated: true)
+                return
+            }
+            responder = r.next
+        }
     }
 
     @objc open func editMenuInteraction(

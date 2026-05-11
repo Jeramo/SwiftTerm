@@ -612,6 +612,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // nothing re-fires the delegate until the user triggers a layout
         // change (typically by summoning the keyboard).
         processSizeChange(newSize: bounds.size)
+        // processSizeChange only fires the sizeChanged delegate when
+        // cols/rows actually changed. If the size pipeline thinks
+        // everything matches, the delegate stays silent — but the host
+        // (e.g. Pling's ForwardingCoordinator) may have missed an earlier
+        // fire and still be sitting on a pendingData buffer. Re-issue the
+        // delegate with the current cols/rows so a "first activate showed
+        // only the cursor cell" path can recover without keyboard summon.
+        terminalDelegate?.sizeChanged(source: self,
+                                      newCols: terminal.cols,
+                                      newRows: terminal.rows)
         terminal.updateFullScreen()
         queuePendingDisplay()
         #if canImport(MetalKit)

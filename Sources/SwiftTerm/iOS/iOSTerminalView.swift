@@ -532,6 +532,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         terminal.updateFullScreen()
         queuePendingDisplay()
         #if canImport(MetalKit)
+        // Populate metalDirtyRange synchronously so the next Metal draw
+        // (which fires from MTKView's own display link, independent of our
+        // step()) rebuilds every visible row instead of reusing stale
+        // rowCache entries. Without this, the renderer can land before
+        // updateDisplay() has had a chance to merge the dirty range, and
+        // host un-hide paints the screen from cache except for the single
+        // cell the cursor just touched.
+        metalDirtyRange = metalVisibleRange()
         requestMetalDisplay()
         #endif
     }

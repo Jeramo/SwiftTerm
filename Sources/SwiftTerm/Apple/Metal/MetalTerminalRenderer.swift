@@ -218,6 +218,13 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private var atlasResetHandled = false
     private var cursorBlinkTimer: Timer?
     private var cursorBlinkOn = true
+    /// Cache the drawableSize we last assigned to the MTKView so we can
+    /// skip the redundant setter call on frames where bounds*scale matches.
+    /// Setting CAMetalLayer.drawableSize even to its current value goes
+    /// through internal validation and on some iOS releases triggers a
+    /// pending-drawable check that competes with our next currentDrawable
+    /// read. Idempotent assignment elides both costs entirely.
+    private var lastSetDrawableSize: CGSize = .zero
     private let frameSemaphore = DispatchSemaphore(value: 1)
     private var pendingRedraw = false
     private let redrawLock = NSLock()
@@ -342,7 +349,12 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             return
         }
         let scale = terminalView.backingScaleFactor()
-        view.drawableSize = CGSize(width: view.bounds.width * scale, height: view.bounds.height * scale)
+        let desiredDrawableSize = CGSize(width: view.bounds.width * scale,
+                                         height: view.bounds.height * scale)
+        if desiredDrawableSize != lastSetDrawableSize {
+            view.drawableSize = desiredDrawableSize
+            lastSetDrawableSize = desiredDrawableSize
+        }
         let cursorStyle = terminalView.terminal.options.cursorStyle
         let shouldBlink = isBlinkStyle(cursorStyle) && !terminalView.terminal.cursorHidden
         updateCursorBlinkTimer(shouldBlink: shouldBlink)

@@ -831,6 +831,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                        height: CGFloat (selection.end.row-selection.start.row+1)*cellDimension.height)
     }
     
+    /// URL captured at the start of the current long-press, if the press
+    /// landed on a hyperlink. Consumed by the UIEditMenuInteraction
+    /// delegate on its next invocation so that long-press on a URL shows
+    /// Open/Copy/Share Link (Safari/Notes style) instead of the regular
+    /// selection menu. Always written before showContextMenu so a
+    /// previous URL never leaks into a non-URL long-press.
+    private var pendingLongPressURL: String?
+
     @objc func longPress (_ gestureRecognizer: UILongPressGestureRecognizer)
     {
          if gestureRecognizer.state == .began {
@@ -841,13 +849,67 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
              grabHaptic.impactOccurred()
              selectionHaptics.prepare()
              let tapLocation = gestureRecognizer.location(in: gestureRecognizer.view)
+             let tapHit = calculateTapHit(gesture: gestureRecognizer).grid
+
+             // Long-press itself is an intent signal, so ignore the
+             // hover-with-modifier gating that linkForClick normally
+             // applies for plain taps. If the press landed on a URL,
+             // the edit-menu delegate switches to the URL menu.
+             pendingLongPressURL = linkForClick(at: tapHit, hasCommandModifier: true)?.link
              let tapRegion = makeContextMenuRegionForTap (point: tapLocation)
 
-             showContextMenu (forRegion: tapRegion,
-                              pos: calculateTapHit (gesture: gestureRecognizer).grid)
+             showContextMenu (forRegion: tapRegion, pos: tapHit)
           }
     }
-    
+
+    /// Build the iOS-standard URL action menu (Open / Copy / Share)
+    /// shown when a long-press lands on a hyperlink. Matches the menu
+    /// Safari and Notes show for the same gesture.
+    private func makeURLLongPressMenu(for url: String) -> UIMenu {
+        let openImage = UIImage(systemName: "arrow.up.right.square")
+        let open = UIAction(title: "Open Link", image: openImage) { [weak self] _ in
+            guard let self = self else { return }
+            self.terminalDelegate?.requestOpenLink(source: self, link: url, params: [:])
+        }
+        let copyImage = UIImage(systemName: "doc.on.doc")
+        let copy = UIAction(title: "Copy Link", image: copyImage) { _ in
+            UIPasteboard.general.string = url
+        }
+        let shareImage = UIImage(systemName: "square.and.arrow.up")
+        let share = UIAction(title: "Share…", image: shareImage) { [weak self] _ in
+            self?.presentSelectionShareSheet(url)
+        }
+        return UIMenu(children: [open, copy, share])
+    }
+
+    /// Present a native iOS share sheet for `text`. Lives on the main
+    /// class (not the iOS-16+ UIEditMenuInteraction extension) because
+    /// UIActivityViewController is iOS 6+ and we call this from both the
+    /// selection-menu Share entry and the URL long-press menu.
+    fileprivate func presentSelectionShareSheet(_ text: String) {
+        let activity = UIActivityViewController(activityItems: [text], applicationActivities: nil)
+        // iPad/regular-width: required popover anchor, otherwise UIKit
+        // throws at presentation time. Anchor to the same rect the edit
+        // menu was positioned over so the share sheet pops out from the
+        // selection naturally.
+        if let popover = activity.popoverPresentationController {
+            popover.sourceView = self
+            popover.sourceRect = lastLongSelectRegion
+            popover.permittedArrowDirections = [.up, .down]
+        }
+        // Walk the responder chain to the nearest presenting view
+        // controller. UIScrollView doesn't have a -presentViewController
+        // entry point of its own; we need the owning UIViewController.
+        var responder: UIResponder? = self
+        while let r = responder {
+            if let vc = r as? UIViewController {
+                vc.present(activity, animated: true)
+                return
+            }
+            responder = r.next
+        }
+    }
+
     /// This controls whether the backspace should send ^? or ^H, the default is ^?
     public var backspaceSendsControlH: Bool = false
 
@@ -3253,6 +3315,13 @@ extension TerminalView: UIEditMenuInteractionDelegate {
         menuFor configuration: UIEditMenuConfiguration,
         suggestedActions: [UIMenuElement]
     ) -> UIMenu? {
+        // Long-press-on-URL: show the iOS standard Open/Copy/Share Link
+        // menu instead of the selection menu. Consumed-once so the next
+        // long-press (which may not be on a URL) goes back to selection.
+        if let url = pendingLongPressURL {
+            pendingLongPressURL = nil
+            return makeURLLongPressMenu(for: url)
+        }
         // We rely on the canPerformAction(_:withSender:) gate above, so the
         // system filters Copy/Paste/Select/Select All to whatever is valid
         // for the current selection state. Returning suggestedActions here
@@ -3271,30 +3340,6 @@ extension TerminalView: UIEditMenuInteractionDelegate {
             actions.append(share)
         }
         return UIMenu(children: actions)
-    }
-
-    private func presentSelectionShareSheet(_ text: String) {
-        let activity = UIActivityViewController(activityItems: [text], applicationActivities: nil)
-        // iPad/regular-width: required popover anchor, otherwise UIKit
-        // throws at presentation time. Anchor to the same rect the edit
-        // menu was positioned over so the share sheet pops out from the
-        // selection naturally.
-        if let popover = activity.popoverPresentationController {
-            popover.sourceView = self
-            popover.sourceRect = lastLongSelectRegion
-            popover.permittedArrowDirections = [.up, .down]
-        }
-        // Walk the responder chain to the nearest presenting view
-        // controller. UIScrollView doesn't have a -presentViewController
-        // entry point of its own; we need the owning UIViewController.
-        var responder: UIResponder? = self
-        while let r = responder {
-            if let vc = r as? UIViewController {
-                vc.present(activity, animated: true)
-                return
-            }
-            responder = r.next
-        }
     }
 
     @objc open func editMenuInteraction(

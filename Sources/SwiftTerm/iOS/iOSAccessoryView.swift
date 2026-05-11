@@ -418,12 +418,19 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
 
 
 class BackgroundSelectedButton: UIButton {
-    
+
     var color: UIColor?
-    
+
     override var isSelected: Bool {
         didSet {
-            self.backgroundColor = isSelected ? UIView().tintColor : color
+            // Was: `UIView().tintColor` — a freshly-instantiated UIView has no
+            // superview chain, so tintColor returns the system-wide default
+            // blue regardless of what the app actually configured. Plus
+            // building a UIView per state flip is wasteful.
+            //
+            // self.tintColor walks the responder/superview chain to the
+            // button's actual effective tint.
+            self.backgroundColor = isSelected ? self.tintColor : color
         }
     }
 }

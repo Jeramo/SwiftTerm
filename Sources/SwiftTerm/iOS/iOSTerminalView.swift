@@ -398,7 +398,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             mtkView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             mtkView.isPaused = true
             mtkView.enableSetNeedsDisplay = true
-            mtkView.framebufferOnly = true
+            // framebufferOnly = false lets `drawHierarchy(in:afterScreenUpdates:)`
+            // read the Metal layer's pixels back for session previews and resize
+            // freeze layers. With it set to true, Metal picks compressed texture
+            // formats that snapshotting can't sample, and host-side captures
+            // come back as solid black on random frames.
+            mtkView.framebufferOnly = false
             mtkView.colorPixelFormat = .bgra8Unorm
             mtkView.isUserInteractionEnabled = false
             mtkView.preferredFramesPerSecond = 120

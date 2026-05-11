@@ -18,6 +18,20 @@ class CaretView: UIView {
     var ctline: CTLine?
     var bgColor: CGColor
     var tracksFocus = true
+
+    // Cached identity of whatever CharData built the current `ctline`, so
+    // setText(ch:) can short-circuit when the cursor hasn't actually moved
+    // onto a different cell. AppleTerminalView.updateCursorPosition() calls
+    // setText every step() — without this cache that allocates a fresh
+    // NSAttributedString + CTLine + fires setNeedsDisplay on every frame
+    // during streaming output, even though the cell at the cursor is
+    // almost always identical to the prior frame's. Sentinel value -1 is
+    // outside the valid 0..<CharData.maxRune range so the first real call
+    // always misses and primes the cache.
+    private var cachedCharCode: Int32 = -1
+    private var cachedCharAttribute: Attribute?
+    private var cachedCharFg: UIColor?
+    private var cachedCharBg: UIColor?
     
     public init (frame: CGRect, cursorStyle: CursorStyle, terminal: TerminalView)
     {
@@ -78,12 +92,40 @@ class CaretView: UIView {
     }
     
     func setText (ch: CharData) {
+        let fg = caretColor
+        let bg = caretTextColor ?? terminal?.nativeForegroundColor ?? TTColor.black
+        if ch.code == cachedCharCode &&
+           ch.attribute == cachedCharAttribute &&
+           fg == cachedCharFg &&
+           bg == cachedCharBg {
+            // Cell at the cursor is bit-identical to the last paint —
+            // ctline still holds the correct shaped glyph. Skip the
+            // NSAttributedString + CTLine allocation and the redraw.
+            return
+        }
         let character = terminal?.terminal.getCharacter(for: ch) ?? " "
         let res = NSAttributedString (
             string: String (character),
-            attributes: terminal?.getAttributedValue(ch.attribute, usingFg: caretColor, andBg: caretTextColor ?? terminal?.nativeForegroundColor ?? TTColor.black))
+            attributes: terminal?.getAttributedValue(ch.attribute, usingFg: fg, andBg: bg))
         ctline = CTLineCreateWithAttributedString(res)
+        cachedCharCode = ch.code
+        cachedCharAttribute = ch.attribute
+        cachedCharFg = fg
+        cachedCharBg = bg
         setNeedsDisplay(bounds)
+    }
+
+    /// Drop the caret-glyph cache so the next setText(ch:) call rebuilds.
+    /// Call from any path that changes what the cached glyph would have
+    /// rendered to — most importantly font swaps, since the CTLine has the
+    /// font baked in and a stale glyph would persist into the new font's
+    /// metric. The fg/bg comparison in setText handles palette changes
+    /// inherently.
+    func invalidateCharCache() {
+        cachedCharCode = -1
+        cachedCharAttribute = nil
+        cachedCharFg = nil
+        cachedCharBg = nil
     }
     
     func updateCursorStyle () {

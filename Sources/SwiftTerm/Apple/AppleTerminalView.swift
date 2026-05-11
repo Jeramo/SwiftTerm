@@ -116,6 +116,15 @@ extension TerminalView {
         guard let caretView else { return }
         caretView.frame.size = CGSize(width: cellDimension.width, height: cellDimension.height)
         caretView.updateCursorStyle()
+        #if os(iOS) || os(visionOS)
+        // resetFont() routes through here on every font-size / family swap.
+        // The caret view caches its CTLine across setText(ch:) calls to
+        // avoid per-frame allocs during streaming, and the CTLine has the
+        // font baked in — without an explicit drop, the cursor would
+        // render with the OLD font's glyph until something else nudged the
+        // cache.
+        caretView.invalidateCharCache()
+        #endif
     }
     
     /// The frame used by the caretView

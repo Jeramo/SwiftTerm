@@ -1736,6 +1736,24 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         drawTerminalContents (dirtyRect: dirtyRect, context: context, bufferOffset: 0)
     }
+    open override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard didFinishSetup else { return }
+        // When this view enters a window for the first time (or after being
+        // moved between windows), force a complete redraw + size-delegate
+        // re-issue. Without this hook, if the view was initialized while
+        // its superview chain wasn't yet attached to a window — common with
+        // SwiftUI UIViewControllerRepresentable, where updateUIViewController
+        // fires before the VC view is inserted into a window — the MTKView
+        // couldn't get a drawable, the first setNeedsDisplay was silently
+        // dropped, and nothing re-triggered. forceRedraw also re-fires
+        // sizeChanged so any host buffering pendingData on a missed delegate
+        // (e.g. Pling's ForwardingCoordinator) flushes immediately.
+        if window != nil {
+            forceRedraw()
+        }
+    }
+
     open override func layoutSubviews() {
         super.layoutSubviews()
         guard didFinishSetup else { return }

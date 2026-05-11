@@ -636,9 +636,14 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
 
         let visibleRange = firstRow...lastRow
-        if !rowCache.isEmpty {
-            rowCache = rowCache.filter { visibleRange.contains($0.key) }
-        }
+        // Note: there's no per-frame visibility filter here. The cache
+        // signature already includes yDisp/rows/cols/viewWidth/viewHeight/
+        // scale/font, so any change to what's visible clears rowCache via
+        // the `signatureChanged` branch above. The row-build loop below
+        // only ever writes keys within visibleRange, so the dict can never
+        // accumulate out-of-range entries. A defensive `rowCache.filter`
+        // here used to allocate a fresh Dictionary on every draw at
+        // 120 Hz for zero functional benefit.
 
         let dirtyRange = terminalView.metalDirtyRange
         terminalView.metalDirtyRange = nil

@@ -138,9 +138,21 @@ extension TerminalView {
         // Calculation assume that all glyphs in the font have the same advancement.
         // Get the ascent + descent + leading from the font, already scaled for the font's size
         self.cellDimension = computeFontDimensions ()
-        
-        let terminalOptions = TerminalOptions(cols: Int(width / cellDimension.width),
-                                              rows: Int(height / cellDimension.height))
+
+        // Fall back to a sane 80x25 when bounds are zero at init time. iOS
+        // hosts (Pling's TerminalViewPool, SwiftUI representables) construct
+        // the view with frame: .zero and only set a real frame after init
+        // returns. Without this fallback, Terminal initializes at MIN(2,1),
+        // SSH connects with that size, and the shell renders its initial
+        // output 2 columns wide — tmux status bars and similar wrap to
+        // one character per row and stay that way in scrollback forever.
+        // 80x25 is the canonical TTY default; the next processSizeChange
+        // resizes correctly once layoutSubviews has settled.
+        let derivedCols = cellDimension.width > 0 ? Int(width / cellDimension.width) : 0
+        let derivedRows = cellDimension.height > 0 ? Int(height / cellDimension.height) : 0
+        let initialCols = derivedCols > 0 ? derivedCols : 80
+        let initialRows = derivedRows > 0 ? derivedRows : 25
+        let terminalOptions = TerminalOptions(cols: initialCols, rows: initialRows)
         
         if terminal == nil {
             terminal = Terminal(delegate: self, options: terminalOptions)
@@ -181,9 +193,17 @@ extension TerminalView {
     /// Returns true if this changed the number of columns/rows, false otherwise
     @discardableResult
     func processSizeChange (newSize: CGSize) -> Bool {
+        // Skip transient zero/tiny bounds (typical during early SwiftUI layout
+        // passes). Without this, a single zero-sized layoutSubviews would
+        // resize the terminal to MIN(2,1), undoing the 80x25 init default
+        // and forcing the shell to re-render its UI at 2 columns wide.
+        guard newSize.width > 0, newSize.height > 0,
+              cellDimension.width > 0, cellDimension.height > 0 else {
+            return false
+        }
         let newRows = Int (newSize.height / cellDimension.height)
         let newCols = Int (getEffectiveWidth (size: newSize) / cellDimension.width)
-        
+
         if newCols != terminal.cols || newRows != terminal.rows {
             selection.active = false
             terminal.resize (cols: newCols, rows: newRows)

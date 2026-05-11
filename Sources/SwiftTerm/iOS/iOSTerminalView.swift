@@ -1442,6 +1442,21 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return nil
     }
 
+    /// On iPad/Mac with a trackpad or mouse, transform the system pointer
+    /// into a vertical beam (iBeam) when hovering over the terminal — the
+    /// same effect UITextView/UITextField get for free. Without this the
+    /// pointer stays as the default pill, which feels foreign over text
+    /// content and gives no hint that the area accepts selection.
+    @available(iOS 13.4, visionOS 1.0, *)
+    public func pointerInteraction(_ interaction: UIPointerInteraction, styleFor region: UIPointerRegion) -> UIPointerStyle? {
+        // Beam length tracks current cell height so the pointer scales
+        // sensibly when the user pinch-zooms the font. Fall back to a
+        // sane default if cellDimension hasn't been computed yet.
+        let beamLength = cellDimension.height > 0 ? cellDimension.height : 16
+        let shape = UIPointerShape.verticalBeam(length: beamLength)
+        return UIPointerStyle(shape: shape, constrainedAxes: [])
+    }
+
     @objc func handleHover (_ gestureRecognizer: UIHoverGestureRecognizer)
     {
         switch gestureRecognizer.state {

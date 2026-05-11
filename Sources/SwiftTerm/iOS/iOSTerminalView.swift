@@ -1736,43 +1736,58 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         drawTerminalContents (dirtyRect: dirtyRect, context: context, bufferOffset: 0)
     }
-    private var hasSentFirstWindowRedrawKick = false
+    /// Generation token bumped on each didMoveToWindow that needs a
+    /// Ctrl-L kick. The deferred 250ms async block checks this before
+    /// sending, so rapid window-attach/detach cycles only send the
+    /// Ctrl-L for the latest entry (cancels any in-flight pending ones).
+    private var pendingWindowEntryKickToken: UInt = 0
 
     open override func didMoveToWindow() {
         super.didMoveToWindow()
         guard didFinishSetup else { return }
-        // When this view enters a window for the first time (or after being
-        // moved between windows), force a complete redraw + size-delegate
-        // re-issue. Without this hook, if the view was initialized while
-        // its superview chain wasn't yet attached to a window — common with
-        // SwiftUI UIViewControllerRepresentable, where updateUIViewController
-        // fires before the VC view is inserted into a window — the MTKView
+        // When this view enters a window — first time or any subsequent
+        // re-attach (split-view, pool recycle, navigation pop, etc.) — force
+        // a complete redraw + size-delegate re-issue. Without this hook, if
+        // the view was initialized while its superview chain wasn't yet
+        // attached to a window (common with SwiftUI
+        // UIViewControllerRepresentable, where updateUIViewController fires
+        // before the VC view is inserted into a window), the MTKView
         // couldn't get a drawable, the first setNeedsDisplay was silently
         // dropped, and nothing re-triggered. forceRedraw also re-fires
-        // sizeChanged so any host buffering pendingData on a missed delegate
-        // (e.g. Pling's ForwardingCoordinator) flushes immediately.
+        // sizeChanged so any host buffering pendingData on a missed
+        // delegate (e.g. Pling's ForwardingCoordinator) flushes
+        // immediately.
         guard window != nil else { return }
         forceRedraw()
 
-        // Send a single Ctrl-L (form feed, 0x0C) to the remote shell once,
-        // after the first window-attach has settled. This kicks tmux,
-        // zellij, vim, and most interactive shells to redraw their visible
-        // viewport into the now-final size — fixing the artifact where any
-        // pre-final-size render of tmux's status bar (or other UI) sticks
-        // around because tmux only repaints rows it explicitly touches and
-        // the buffer reshape padded the original narrow render with blanks.
-        // Single-shot via a flag so re-entering the window later (split-
-        // view re-parent, etc.) doesn't keep nuking the visible state.
-        if !hasSentFirstWindowRedrawKick {
-            hasSentFirstWindowRedrawKick = true
-            // Defer a beat so the bridge's debounced sendResize has time
-            // to push the proper PTY size upstream first; otherwise the
-            // remote redraw races the resize and re-renders at the old
-            // size.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-                guard let self = self, self.window != nil else { return }
-                self.send([0x0C])
-            }
+        // Send a Ctrl-L (form feed, 0x0C) to the remote shell after the
+        // window-attach settles. This kicks tmux, zellij, vim, and any
+        // interactive shell to repaint their visible viewport into the
+        // current dimensions — cleaning up the artifact where the buffer
+        // carries pre-final-size cells (a tmux status bar rendered at a
+        // tiny intermediate size, etc.) that the local terminal can't
+        // clear without protocol-level cooperation.
+        //
+        // NOT single-shot: a previous single-shot version fixed first
+        // entry but second entry kept showing the artifact, because pool-
+        // recycled views' buffers can accumulate narrow-render cells from
+        // any layoutSubviews cycle that ran with small bounds while the
+        // view was hidden. Every entry gets the kick; Ctrl-L is
+        // non-disruptive (vim/tmux/zellij handle it as "redraw"; shells
+        // re-print their prompt).
+        //
+        // Defer 250 ms so the bridge's debounced sendResize (~120 ms) has
+        // already pushed any size change upstream first; otherwise the
+        // remote redraw races the resize and repaints at the previous
+        // size. Token-gated so rapid re-entries collapse to the last
+        // entry's kick.
+        pendingWindowEntryKickToken &+= 1
+        let token = pendingWindowEntryKickToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self = self,
+                  self.window != nil,
+                  self.pendingWindowEntryKickToken == token else { return }
+            self.send([0x0C])
         }
     }
 

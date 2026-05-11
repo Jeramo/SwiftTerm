@@ -66,7 +66,7 @@ private final class DisplayLinkTarget: NSObject {
  * Use the `configureNativeColors()` to set the defaults colors for the view to match the OS
  * defaults, otherwise, this uses its own set of defaults colors.
  */
-open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate, TerminalDelegate, UIPointerInteractionDelegate, UIDragInteractionDelegate {
+open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate, TerminalDelegate, UIPointerInteractionDelegate, UIDragInteractionDelegate, UIDropInteractionDelegate {
     public static var textInputDebugEnabled: Bool = ProcessInfo.processInfo.environment["SWIFTTERM_TEXT_INPUT_DEBUG"] == "1"
     /// Optional forwarder for UITextInput debug events. When set, every uitiLog
     /// line and `send(...)` event is also handed to this closure (in addition
@@ -707,25 +707,35 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     @objc open override func paste (_ sender: Any?) {
         disableSelectionPanGesture()
         if let start = UIPasteboard.general.string {
-            if terminal.bracketedPasteMode {
-                // Strip ESC from paste content. If the user's clipboard
-                // contains \e[201~ it would prematurely close the bracketed-
-                // paste region and the remainder would be interpreted as
-                // terminal commands -- the classic "bracketed paste
-                // injection" vector. xterm and iTerm2 strip ESC entirely
-                // for the same reason; that's safer than trying to detect
-                // only the specific terminator since any escape inside
-                // paste content corrupts shells that read the buffer in
-                // cooked mode.
-                let sanitized = start.replacingOccurrences(of: "\u{1B}", with: "")
-                send(data: EscapeSequences.bracketedPasteStart[0...])
-                send(txt: sanitized)
-                send(data: EscapeSequences.bracketedPasteEnd[0...])
-            } else {
-                send(txt: start)
-            }
-            queuePendingDisplay()
+            insertPastedText(start)
         }
+    }
+
+    /// Send `text` to the terminal as if it were a paste — respecting
+    /// bracketed-paste mode (and stripping inline ESC bytes to block the
+    /// classic bracketed-paste injection vector). Shared by paste(_:)
+    /// and the UIDropInteractionDelegate text drop handler so dropped
+    /// text from another app goes through exactly the same sanitization
+    /// and terminal framing as a manual menu paste.
+    func insertPastedText(_ text: String) {
+        if terminal.bracketedPasteMode {
+            // Strip ESC from paste content. If the user's clipboard
+            // contains \e[201~ it would prematurely close the bracketed-
+            // paste region and the remainder would be interpreted as
+            // terminal commands -- the classic "bracketed paste
+            // injection" vector. xterm and iTerm2 strip ESC entirely
+            // for the same reason; that's safer than trying to detect
+            // only the specific terminator since any escape inside
+            // paste content corrupts shells that read the buffer in
+            // cooked mode.
+            let sanitized = text.replacingOccurrences(of: "\u{1B}", with: "")
+            send(data: EscapeSequences.bracketedPasteStart[0...])
+            send(txt: sanitized)
+            send(data: EscapeSequences.bracketedPasteEnd[0...])
+        } else {
+            send(txt: text)
+        }
+        queuePendingDisplay()
     }
 
     @objc open override func copy(_ sender: Any?) {
@@ -1437,6 +1447,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let dragInteraction = UIDragInteraction(delegate: self)
         dragInteraction.isEnabled = true
         addInteraction(dragInteraction)
+
+        // Drop-in: accept text dragged from Notes/Mail/Safari/etc. and
+        // paste it through the same bracketed-paste-aware pipeline as
+        // the menu Paste action. Without this, dropping text onto the
+        // terminal in split-screen was a silent no-op.
+        let dropInteraction = UIDropInteraction(delegate: self)
+        addInteraction(dropInteraction)
 
         if pinchToZoomEnabled {
             let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handleFontPinch(_:)))
@@ -3443,6 +3460,44 @@ extension TerminalView {
     @objc open func dragInteraction(_ interaction: UIDragInteraction,
                                     sessionWillBegin session: UIDragSession) {
         hideContextMenuIfVisible()
+    }
+
+    // MARK: - UIDropInteractionDelegate
+
+    /// Accept only text drops. Image/file drops aren't meaningful in a
+    /// terminal — we'd have nothing useful to do with them.
+    @objc open func dropInteraction(_ interaction: UIDropInteraction,
+                                    canHandle session: UIDropSession) -> Bool {
+        return session.canLoadObjects(ofClass: NSString.self)
+    }
+
+    /// Tell the system this is a copy operation (the originating app
+    /// keeps its text; we paste a copy). Without sessionDidUpdate
+    /// returning a proposal the cursor shows the "forbidden" badge and
+    /// drop never completes.
+    @objc open func dropInteraction(_ interaction: UIDropInteraction,
+                                    sessionDidUpdate session: UIDropSession) -> UIDropProposal {
+        return UIDropProposal(operation: .copy)
+    }
+
+    /// Load the dropped text on the main thread (loadObjects guarantees
+    /// completion-on-main) and feed it through the shared
+    /// insertPastedText pipeline so bracketed-paste framing and ESC
+    /// stripping apply just like a menu Paste.
+    @objc open func dropInteraction(_ interaction: UIDropInteraction,
+                                    performDrop session: UIDropSession) {
+        session.loadObjects(ofClass: NSString.self) { [weak self] objects in
+            guard let self = self else { return }
+            for case let str as NSString in objects {
+                self.insertPastedText(str as String)
+            }
+            // Light tick confirms the drop landed. Symmetric to the
+            // copy haptic, and useful because the visual feedback for
+            // a successful drop ends with the lift-preview animating
+            // away — the user may not see the inserted text appear at
+            // the prompt immediately.
+            self.actionHaptic.impactOccurred()
+        }
     }
 }
 

@@ -327,8 +327,13 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     }
     
     public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-            super.traitCollectionDidChange(previousTraitCollection)
-return
+        super.traitCollectionDidChange(previousTraitCollection)
+        // Was: an unindented `return` here that no-op'd this entire override
+        // (probably a debug short-circuit that shipped). The result was that
+        // the accessory bar kept its previous-mode button colors after the
+        // user switched between dark and light mode, until the keyboard
+        // was dismissed and re-shown. Rebuild the UI so button backgrounds,
+        // titles, and icons pick up the new trait collection's palette.
         setupUI()
     }
 

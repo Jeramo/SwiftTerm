@@ -1760,33 +1760,39 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         guard window != nil else { return }
         forceRedraw()
 
-        // Send a Ctrl-L (form feed, 0x0C) to the remote shell after the
-        // window-attach settles. This kicks tmux, zellij, vim, and any
-        // interactive shell to repaint their visible viewport into the
-        // current dimensions — cleaning up the artifact where the buffer
-        // carries pre-final-size cells (a tmux status bar rendered at a
-        // tiny intermediate size, etc.) that the local terminal can't
-        // clear without protocol-level cooperation.
+        // Two-step repaint: clear the local visible viewport, then ask the
+        // remote shell to repaint into the now-blank canvas. Ctrl-L alone
+        // (the previous single-shot and every-entry versions both tried
+        // this) isn't enough — tmux only writes to cells its current panes
+        // and status bar own, so cells filled with old narrow-render
+        // content from any intermediate-bounds layout cycle stay visible
+        // in the rows tmux's content doesn't cover.
         //
-        // NOT single-shot: a previous single-shot version fixed first
-        // entry but second entry kept showing the artifact, because pool-
-        // recycled views' buffers can accumulate narrow-render cells from
-        // any layoutSubviews cycle that ran with small bounds while the
-        // view was hidden. Every entry gets the kick; Ctrl-L is
-        // non-disruptive (vim/tmux/zellij handle it as "redraw"; shells
-        // re-print their prompt).
+        // Step 1: feed `\e[H\e[2J` to the LOCAL terminal (cursor home +
+        // erase entire display). Bypasses the remote; clears the buffer
+        // cells the renderer will draw next. tmux's internal state is
+        // unaffected because we never sent these bytes upstream.
         //
-        // Defer 250 ms so the bridge's debounced sendResize (~120 ms) has
-        // already pushed any size change upstream first; otherwise the
-        // remote redraw races the resize and repaints at the previous
-        // size. Token-gated so rapid re-entries collapse to the last
-        // entry's kick.
+        // Step 2: send Ctrl-L (0x0C) upstream so tmux / zellij / vim /
+        // bash all redraw their visible viewport. The result is a clean
+        // surface filled exclusively by the remote's current intent.
+        //
+        // Both deferred 250 ms so the bridge's debounced sendResize
+        // (~120 ms) has already pushed any size change upstream first —
+        // otherwise the remote redraw races the resize and repaints at
+        // the previous size. Token-gated so rapid re-entries collapse to
+        // the last entry's kick.
         pendingWindowEntryKickToken &+= 1
         let token = pendingWindowEntryKickToken
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             guard let self = self,
                   self.window != nil,
                   self.pendingWindowEntryKickToken == token else { return }
+            // Local viewport wipe: ESC [ H = cursor home; ESC [ 2J = erase
+            // entire display. Fed (not sent) so it doesn't reach the shell.
+            self.terminal.feed(byteArray: [0x1B, 0x5B, 0x48, 0x1B, 0x5B, 0x32, 0x4A])
+            // Remote redraw: Ctrl-L form feed. Canonical "redraw screen"
+            // signal across vim, tmux, zellij, bash, zsh.
             self.send([0x0C])
         }
     }

@@ -2160,6 +2160,13 @@ extension TerminalView {
             if TerminalView.textInputDebugEnabled { print(line) }
             sink?(line)
         }
+        // User-input funnel: pause cursor blink while typing so the caret
+        // behaves like UITextView's (solid during typing, blinks when idle).
+        // Both the UIView caret and the Metal renderer's internal cursor
+        // are paused; whichever is currently visible (Metal mode hides the
+        // CaretView) will catch the hold.
+        caretView?.holdCursorSolid(for: 0.6)
+        metalRenderer?.holdCursorSolid(for: 0.6)
         #endif
         terminalDelegate?.send (source: self, data: data)
     }

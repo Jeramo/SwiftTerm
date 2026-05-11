@@ -87,6 +87,32 @@ class CaretView: UIView {
         updateCursorStyle()
     }
 
+    /// Pause the blink animation, hold the caret solid, then resume after
+    /// `duration` of inactivity. Matches UITextView's caret behavior: blink
+    /// stops the moment you type and only resumes after a short idle.
+    /// Each call resets the resume timer, so a burst of keystrokes keeps
+    /// the caret solid throughout the burst.
+    private var blinkResumeTimer: Timer?
+    func holdCursorSolid(for duration: TimeInterval) {
+        // Only meaningful for blink styles; steady styles never animate.
+        switch style {
+        case .blinkBlock, .blinkBar, .blinkUnderline:
+            break
+        case .steadyBlock, .steadyBar, .steadyUnderline:
+            return
+        }
+        // Reduce Motion users already see a solid caret — nothing to pause.
+        if UIAccessibility.isReduceMotionEnabled { return }
+        layer.removeAllAnimations()
+        layer.opacity = 1
+        blinkResumeTimer?.invalidate()
+        blinkResumeTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            self.blinkResumeTimer = nil
+            self.updateCursorStyle()
+        }
+    }
+
     func updateAnimation (to: Bool) {
         layer.removeAllAnimations()
         self.layer.opacity = 1

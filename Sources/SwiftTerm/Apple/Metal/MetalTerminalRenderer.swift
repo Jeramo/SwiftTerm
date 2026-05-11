@@ -218,6 +218,13 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
     private var atlasResetHandled = false
     private var cursorBlinkTimer: Timer?
     private var cursorBlinkOn = true
+    /// When non-nil, the blink timer keeps the cursor solid (cursorBlinkOn =
+    /// true) until CACurrentMediaTime() passes this deadline. Mirrors the
+    /// native UITextView caret behavior: blinking pauses the instant the
+    /// user types, then resumes ~0.6s after the last keystroke. Without
+    /// this, the cursor flickers off mid-typing on every blink cycle, which
+    /// reads as laggy compared to the iOS keyboard caret.
+    private var cursorBlinkPauseUntil: CFTimeInterval = 0
     /// Cache the drawableSize we last assigned to the MTKView so we can
     /// skip the redundant setter call on frames where bounds*scale matches.
     /// Setting CAMetalLayer.drawableSize even to its current value goes
@@ -2663,6 +2670,19 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    /// Hold the cursor solid for `duration` seconds, starting now. Called
+    /// from the user-input funnel so the caret behaves like UITextView's:
+    /// stops blinking the instant you type, resumes blinking after a brief
+    /// idle. Force-on the current state so the user sees the caret
+    /// immediately even if it was mid-off-phase when the keystroke arrived.
+    func holdCursorSolid(for duration: CFTimeInterval) {
+        cursorBlinkPauseUntil = max(cursorBlinkPauseUntil, CACurrentMediaTime() + duration)
+        if !cursorBlinkOn {
+            cursorBlinkOn = true
+            view?.setNeedsDisplay(view?.bounds ?? .zero)
+        }
+    }
+
     private func updateCursorBlinkTimer(shouldBlink: Bool) {
         if shouldBlink {
             if cursorBlinkTimer == nil {
@@ -2674,6 +2694,16 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                 // .common) so it stays alive through user interaction.
                 let timer = Timer(timeInterval: 0.7, repeats: true) { [weak self] _ in
                     guard let self = self, let view = self.view else {
+                        return
+                    }
+                    if CACurrentMediaTime() < self.cursorBlinkPauseUntil {
+                        // Held solid by a recent keystroke; force-on and skip
+                        // the toggle so the next blink cycle starts after the
+                        // pause window expires.
+                        if !self.cursorBlinkOn {
+                            self.cursorBlinkOn = true
+                            view.setNeedsDisplay(view.bounds)
+                        }
                         return
                     }
                     self.cursorBlinkOn.toggle()

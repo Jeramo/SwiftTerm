@@ -654,7 +654,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         case #selector(copy(_:)):
             return selection.active
         case #selector(paste(_:)):
-            return true
+            // hasStrings is the privacy-conscious check that doesn't trigger
+            // the "Pling pasted from <app>" toast on iOS 16+. Hiding Paste
+            // when the clipboard is empty matches native edit-menu behavior
+            // in Safari/Notes/Mail.
+            return UIPasteboard.general.hasStrings
         case #selector(select(_:)):
             return !selection.active
         case #selector(selectAll(_:)):

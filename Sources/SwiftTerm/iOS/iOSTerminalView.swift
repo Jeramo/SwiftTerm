@@ -1825,7 +1825,26 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let sizeChanged = currentBounds.size != lastLayoutBounds.size
         let originChanged = currentBounds.origin != lastLayoutBounds.origin
 
-        if sizeChanged {
+        // Detect "terminal.cols/rows out of sync with bounds" as a separate
+        // trigger for processSizeChange. The classic case: bounds match
+        // lastLayoutBounds (no apparent size change) but terminal.cols is
+        // somehow stuck at MIN(2) from an earlier path. Without this, the
+        // resize never re-fires and the user sees a 2-column terminal even
+        // though bounds are wide — Claude Code / tmux render one character
+        // per row in a vertical strip down the leftmost columns.
+        var dimensionsOutOfSync = false
+        if !sizeChanged,
+           cellDimension.width > 0, cellDimension.height > 0,
+           currentBounds.width >= cellDimension.width * 4,
+           currentBounds.height >= cellDimension.height * 2 {
+            let derivedCols = Int(currentBounds.width / cellDimension.width)
+            let derivedRows = Int(currentBounds.height / cellDimension.height)
+            if derivedCols != terminal.cols || derivedRows != terminal.rows {
+                dimensionsOutOfSync = true
+            }
+        }
+
+        if sizeChanged || dimensionsOutOfSync {
             processSizeChange(newSize: currentBounds.size)
             updateCursorPosition()
         }

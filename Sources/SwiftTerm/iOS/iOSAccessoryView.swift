@@ -193,7 +193,12 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
 
     @objc func toggleTouch (_ sender: UIButton) {
         terminalView?.allowMouseReporting.toggle()
-        touchButton.isSelected = !(terminalView?.allowMouseReporting ?? false)
+        // Was: `!(terminalView?.allowMouseReporting ?? false)` — the bang
+        // inverted the convention set up at the initial-state line below
+        // (touchButton.isSelected = allowMouseReporting), so after one tap
+        // the button displayed the opposite of the actual mouse-reporting
+        // state.
+        touchButton.isSelected = terminalView?.allowMouseReporting ?? false
     }
 
     var leftViews: [UIView] = []

@@ -66,7 +66,7 @@ private final class DisplayLinkTarget: NSObject {
  * Use the `configureNativeColors()` to set the defaults colors for the view to match the OS
  * defaults, otherwise, this uses its own set of defaults colors.
  */
-open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate, TerminalDelegate, UIPointerInteractionDelegate {
+open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate, TerminalDelegate, UIPointerInteractionDelegate, UIDragInteractionDelegate {
     public static var textInputDebugEnabled: Bool = ProcessInfo.processInfo.environment["SWIFTTERM_TEXT_INPUT_DEBUG"] == "1"
     /// Optional forwarder for UITextInput debug events. When set, every uitiLog
     /// line and `send(...)` event is also handed to this closure (in addition
@@ -1426,6 +1426,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             addInteraction(editMenu)
             swiftTermEditMenuInteraction = editMenu
         }
+
+        // Drag-out selected text to other apps (Notes, Mail, Slack…). On
+        // iPad this enables the standard split-screen drag-and-drop; on
+        // iPhone (iOS 15+) it enables long-press → lift → drop into the
+        // app switcher / shared sheet target. itemsForBeginning gates the
+        // drag on "session location inside selection rect," so a
+        // long-press outside selection still goes through the existing
+        // selection-menu path uninterrupted.
+        let dragInteraction = UIDragInteraction(delegate: self)
+        dragInteraction.isEnabled = true
+        addInteraction(dragInteraction)
 
         if pinchToZoomEnabled {
             let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handleFontPinch(_:)))
@@ -3390,6 +3401,48 @@ extension TerminalViewDelegate {
     }
 
     public func iTermContent (source: TerminalView, content: ArraySlice<UInt8>) {
+    }
+}
+
+extension TerminalView {
+    /// UIDragInteractionDelegate: provide an NSItemProvider wrapping the
+    /// current selection text when the user lifts inside the selection
+    /// rect, so they can drag the snippet into Notes/Mail/Slack/etc. via
+    /// iOS's system drag-and-drop. Returning [] anywhere outside the
+    /// selection rect cancels the drag, letting the existing long-press
+    /// selection menu path proceed normally.
+    @objc open func dragInteraction(_ interaction: UIDragInteraction,
+                                    itemsForBeginning session: UIDragSession) -> [UIDragItem] {
+        guard selection.active,
+              let text = getSelection(),
+              !text.isEmpty else {
+            return []
+        }
+        let location = session.location(in: self)
+        let selectionRect = makeContextMenuRegionForSelection()
+        // makeContextMenuRegionForSelection() returns the selection
+        // rect in this scroll view's content coordinate space (rows
+        // are absolute buffer indices). UIDragSession.location(in:)
+        // returns coordinates in the same space, so a direct contains
+        // check is correct without contentOffset arithmetic.
+        guard selectionRect.contains(location) else {
+            return []
+        }
+        // Cast required for NSItemProviderWriting conformance.
+        let provider = NSItemProvider(object: text as NSString)
+        let item = UIDragItem(itemProvider: provider)
+        item.localObject = text
+        return [item]
+    }
+
+    /// UIDragInteractionDelegate: drag is starting — dismiss the
+    /// long-press context menu that fired ~half a second ago, otherwise
+    /// the user sees the menu hovering over the lifted drag preview.
+    /// Matches Notes/Safari: the menu briefly flashes then yields to
+    /// the lift animation.
+    @objc open func dragInteraction(_ interaction: UIDragInteraction,
+                                    sessionWillBegin session: UIDragSession) {
+        hideContextMenuIfVisible()
     }
 }
 

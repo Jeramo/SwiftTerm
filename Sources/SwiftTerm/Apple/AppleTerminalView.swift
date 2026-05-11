@@ -1834,14 +1834,18 @@ extension TerminalView {
     // It is also cheap, so should be called when new data has been posted or received.
     func queuePendingDisplay ()
     {
+#if os(iOS) || os(visionOS)
+        // Always wake the link, even when `pendingDisplay` is already true.
+        // Parser delegate callbacks fire mid-feed and may set pendingDisplay
+        // to true; if feedFinish then runs `suspendDisplayUpdates()` and
+        // calls back here, the short-circuit would leave the link paused
+        // forever. Unpause first, then dedupe the flag write.
+        link.isPaused = false
         if pendingDisplay { return }
         pendingDisplay = true
-#if os(iOS) || os(visionOS)
-        // Vsync-aligned: wake the existing CADisplayLink and let `step()`
-        // drive `updateDisplay()` on the next frame. Inherits ProMotion 120Hz
-        // automatically when the link's preferredFrameRateRange allows it.
-        link.isPaused = false
 #else
+        if pendingDisplay { return }
+        pendingDisplay = true
         // macOS has no display link wired up; fall back to a wall-clock
         // throttle. 8.33ms = ~120Hz cap.
         let fpsDelay: UInt64 = 8_333_333

@@ -116,17 +116,25 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         repeatTimer?.invalidate()
         repeatTimer = nil
 
-        repeatTask = Task {
+        repeatTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 600_000_000)
             // Check the *current* task's cancellation, not self.repeatTask
             // (which may already point at a newer Task spawned by a
             // subsequent press). Was: `repeatTask?.isCancelled` -- could
             // schedule an orphan Timer that auto-repeats indefinitely.
             guard !Task.isCancelled else { return }
+            guard let self else { return }
             let rc = self.repeatCommand
-            self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
-                rc? ()
+            // Timer.scheduledTimer attaches to the runloop in .default mode,
+            // which suspends during UITrackingRunLoopMode — auto-repeat
+            // would silently stall whenever a scroll-tracking gesture is
+            // running underneath. Build the Timer manually and add it in
+            // .common (union of .default + .tracking) so it stays alive.
+            let timer = Timer(timeInterval: 0.1, repeats: true) { _ in
+                rc?()
             }
+            self.repeatTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
         }
     }
     

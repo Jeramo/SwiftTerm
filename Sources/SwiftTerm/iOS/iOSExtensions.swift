@@ -41,11 +41,14 @@ extension UIColor {
 
     static func make (red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat) -> TTColor
     {
-        
+        // Was hard-coding alpha to 1.0, silently dropping the passed value.
+        // macOS's MacExtensions.make(red:green:blue:alpha:) forwards alpha
+        // correctly via NSColor(deviceRed:green:blue:alpha:), so iOS callers
+        // that wanted translucent colors got opaque ones with no warning.
         return UIColor(red: red,
                        green: green,
                        blue: blue,
-                       alpha: 1.0)
+                       alpha: alpha)
     }
   
     static func make (hue: CGFloat, saturation: CGFloat, brightness: CGFloat, alpha: CGFloat) -> TTColor

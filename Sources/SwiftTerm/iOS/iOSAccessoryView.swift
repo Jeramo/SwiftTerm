@@ -222,27 +222,27 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         terminalView?.setupKeyboardButtonColors ()
         let useSmall = self._useSmall
         if useSmall {
-            leftViews.append(makeButton("", #selector(esc), icon: "escape", isNormal: false))
-            let controlButton = makeButton("", #selector(ctrl), icon: "control", isNormal: false)
+            leftViews.append(makeButton("", #selector(esc), icon: "escape", isNormal: false, a11yLabel: "Escape"))
+            let controlButton = makeButton("", #selector(ctrl), icon: "control", isNormal: false, a11yLabel: "Control")
             leftViews.append(controlButton)
             self.controlButton = controlButton
-            leftViews.append(makeButton("", #selector(tab), icon: "arrow.right.to.line.compact"))
+            leftViews.append(makeButton("", #selector(tab), icon: "arrow.right.to.line.compact", a11yLabel: "Tab"))
         } else {
-            leftViews.append(makeButton ("esc", #selector(esc), isNormal: false))
-            let controlButton = makeButton ("ctrl", #selector(ctrl), isNormal: false)
+            leftViews.append(makeButton ("esc", #selector(esc), isNormal: false, a11yLabel: "Escape"))
+            let controlButton = makeButton ("ctrl", #selector(ctrl), isNormal: false, a11yLabel: "Control")
             leftViews.append(controlButton)
             self.controlButton = controlButton
-            leftViews.append(makeButton("", #selector(tab), icon: "arrow.right.to.line.compact", isNormal: false))
+            leftViews.append(makeButton("", #selector(tab), icon: "arrow.right.to.line.compact", isNormal: false, a11yLabel: "Tab"))
             //leftViews.append(makeButton ("tab", #selector(tab)))
         }
-        rightViews.append(makeAutoRepeatButton ("arrow.left", #selector(left)))
-        rightViews.append(makeAutoRepeatButton ("arrow.down", #selector(down)))
-        rightViews.append(makeAutoRepeatButton ("arrow.up", #selector(up)))
-        rightViews.append(makeAutoRepeatButton ("arrow.right", #selector(right)))
-        touchButton = makeButton ("", #selector(toggleTouch), icon: "hand.draw", isNormal: false)
+        rightViews.append(makeAutoRepeatButton ("arrow.left", #selector(left), a11yLabel: "Left Arrow"))
+        rightViews.append(makeAutoRepeatButton ("arrow.down", #selector(down), a11yLabel: "Down Arrow"))
+        rightViews.append(makeAutoRepeatButton ("arrow.up", #selector(up), a11yLabel: "Up Arrow"))
+        rightViews.append(makeAutoRepeatButton ("arrow.right", #selector(right), a11yLabel: "Right Arrow"))
+        touchButton = makeButton ("", #selector(toggleTouch), icon: "hand.draw", isNormal: false, a11yLabel: "Touch Mouse Mode")
         touchButton.isSelected = terminalView?.allowMouseReporting ?? false
         rightViews.append (touchButton)
-        keyboardButton = makeButton ("", #selector(toggleInputKeyboard), icon: "keyboard.chevron.compact.down", isNormal: false)
+        keyboardButton = makeButton ("", #selector(toggleInputKeyboard), icon: "keyboard.chevron.compact.down", isNormal: false, a11yLabel: "Dismiss Keyboard")
         rightViews.append (keyboardButton)
 
         // calculate aditional space we can give to keys we want to be bigger (all top level except function keys)
@@ -283,10 +283,10 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
             floatViews.append (makeDouble ("~", "|"))
             floatViews.append (makeDouble ("/", "-"))
         } else {
-            floatViews.append(makeButton ("~", #selector(tilde)))
-            floatViews.append(makeButton ("|", #selector(pipe)))
-            floatViews.append(makeButton ("/", #selector(slash)))
-            floatViews.append(makeButton ("-", #selector(dash)))
+            floatViews.append(makeButton ("~", #selector(tilde), a11yLabel: "Tilde"))
+            floatViews.append(makeButton ("|", #selector(pipe), a11yLabel: "Pipe"))
+            floatViews.append(makeButton ("/", #selector(slash), a11yLabel: "Slash"))
+            floatViews.append(makeButton ("-", #selector(dash), a11yLabel: "Hyphen"))
         }
         floatViews.forEach {
             setMinWidth ($0, isImportantKey: true)
@@ -367,23 +367,30 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         }
     }
     
-    func makeAutoRepeatButton (_ iconName: String, _ action: Selector) -> UIButton
+    func makeAutoRepeatButton (_ iconName: String, _ action: Selector, a11yLabel: String? = nil) -> UIButton
     {
-        let b = makeButton ("", action, icon: iconName)
+        let b = makeButton ("", action, icon: iconName, a11yLabel: a11yLabel)
         b.addTarget(self, action: #selector(cancelTimer), for: .touchUpOutside)
         b.addTarget(self, action: #selector(cancelTimer), for: .touchCancel)
         b.addTarget(self, action: #selector(cancelTimer), for: .touchUpInside)
         return b
     }
     
-    func makeButton (_ title: String, _ action: Selector, icon: String = "", isNormal: Bool = true) -> UIButton
+    func makeButton (_ title: String, _ action: Selector, icon: String = "", isNormal: Bool = true, a11yLabel: String? = nil) -> UIButton
     {
         let useSmall = self._useSmall
         let b = BackgroundSelectedButton.init(type: .roundedRect)
-        
+
         TerminalAccessory.styleButton (b)
         b.addTarget(self, action: action, for: .touchDown)
         b.setTitle(title, for: .normal)
+        // VoiceOver label: explicit > title > nil. Symbol titles like
+        // "~", "|", "/", "-" speak literally as "tilde", "bar", "slash",
+        // "hyphen" — passable, but ambiguous next to "F1"/"F2". Icon-
+        // only buttons (esc, ctrl, tab, arrows, hand.draw, keyboard)
+        // have no title at all and would announce as just "button"
+        // without an explicit label.
+        b.accessibilityLabel = a11yLabel ?? (title.isEmpty ? nil : title)
         guard let terminalView else {
             return b
         }
@@ -394,7 +401,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
             b.titleLabel?.font = UIFont.systemFont(ofSize: 12)
         }
         b.backgroundColor = isNormal ? terminalView.buttonBackgroundColor : terminalView.buttonDarkBackgroundColor
-        
+
         if icon != "" {
             if let img = UIImage (systemName: icon, withConfiguration: UIImage.SymbolConfiguration (pointSize: 14.0)) {
                 b.setImage(img.withTintColor(terminalView.buttonColor, renderingMode: .alwaysOriginal), for: .normal)

@@ -51,6 +51,26 @@ class CaretView: UIView {
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
+
+    deinit {
+        // didMoveToWindow adds observers for willEnterForeground and
+        // reduceMotionStatusDidChange against `self` as the target. If
+        // CaretView is deallocated without first transitioning to a nil
+        // window (e.g., view pool dropping it under memory pressure),
+        // those observer entries become dangling and the next
+        // notification post would crash with a UI-thread message-send to
+        // a freed object. removeObserver(self) tears down every entry
+        // we registered, regardless of the named-notification overload.
+        NotificationCenter.default.removeObserver(self)
+        // The blink-resume Timer captures `[weak self]`, so it doesn't
+        // retain CaretView — but the timer itself is held alive by its
+        // runloop entry until it fires or is invalidated. Without this,
+        // a CaretView freed mid-pause leaves a ~600ms runloop-pinned
+        // Timer that fires once, finds self == nil, and exits. Harmless
+        // but wasteful and an obvious lifecycle smell; invalidate
+        // explicitly.
+        blinkResumeTimer?.invalidate()
+    }
     
     var style: CursorStyle {
         didSet {

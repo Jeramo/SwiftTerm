@@ -1975,7 +1975,21 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             settingBg = false
             applyAutomaticKeyboardAppearance()
             applyAutomaticCaretColor()
+            applyAutomaticScrollIndicatorStyle()
         }
+    }
+
+    /// Pick a scroll indicator style that contrasts with the
+    /// terminal background regardless of system trait collection.
+    /// `.default` falls back to the userInterfaceStyle, which is
+    /// wrong for a dark terminal running in a light-mode system
+    /// (gives an unreadable dark indicator on a dark surface).
+    private func applyAutomaticScrollIndicatorStyle() {
+        guard automaticScrollIndicatorStyle else { return }
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard _nativeBg.getRed(&r, green: &g, blue: &b, alpha: &a) else { return }
+        let luma = 0.299 * r + 0.587 * g + 0.114 * b
+        indicatorStyle = luma < 0.5 ? .white : .black
     }
 
     /// Pick a caret color with enough contrast against the current
@@ -2476,6 +2490,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// dark-grey tmux statuses). Hosts that want a fixed caret color
     /// can flip the flag off and set caretColor manually.
     public var automaticCaretColor: Bool = true
+    /// When true (default), `indicatorStyle` auto-tracks
+    /// `nativeBackgroundColor`: dark themes get `.white` indicators,
+    /// light themes get `.black`. The default `.default` only tracks
+    /// the system trait collection, so a dark terminal running in a
+    /// light-mode system showed an unreadable dark indicator. Hosts
+    /// that want a pinned indicator style can flip this off.
+    public var automaticScrollIndicatorStyle: Bool = true
     public var returnKeyType: UIReturnKeyType = .`default`
     
     // This is wrong, but I can not find another good one

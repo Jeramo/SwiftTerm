@@ -717,7 +717,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     @objc open override func paste (_ sender: Any?) {
-        disableSelectionPanGesture()
         if let start = UIPasteboard.general.string {
             insertPastedText(start)
             // Symmetric with the copy haptic: a light tick confirms
@@ -727,6 +726,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             // cue is gone.
             actionHaptic.impactOccurred()
         }
+        // Match the copy(_:) cleanup: clear selection + tear down
+        // the pan recognizer. Previously paste only removed the pan
+        // gesture but left selection.active = true, so the selection
+        // highlight stayed painted with no way for the user to
+        // interact with it — a "frozen" visual state. Native iOS
+        // text views clear the selection on paste because the pasted
+        // text replaces it; for a terminal nothing is replaced but
+        // dropping the now-irrelevant selection matches user
+        // expectation. The disable comes after selectNone so the
+        // pan recognizer sees the inactive selection and doesn't
+        // try to start a new pivot extend on its way out.
+        selection.selectNone()
+        disableSelectionPanGesture()
     }
 
     /// Send `text` to the terminal as if it were a paste — respecting

@@ -3792,6 +3792,17 @@ extension TerminalView {
         hideContextMenuIfVisible()
     }
 
+    /// Terminal output can't be "moved" — the buffer history is
+    /// read-only from the user's perspective. Returning false tells
+    /// the destination app it can only perform .copy when accepting
+    /// our drag. Without this, target apps that distinguish move/copy
+    /// (some text editors) might try to do a move and then expect us
+    /// to cut from source, which we have no way to honor.
+    @objc open func dragInteraction(_ interaction: UIDragInteraction,
+                                    sessionAllowsMoveOperation session: UIDragSession) -> Bool {
+        return false
+    }
+
     /// Customize the lift preview so the drag shows just the selection
     /// rect, not a default full-view snapshot. Without this, the lift
     /// animates the entire terminal upward (chrome and all), which both

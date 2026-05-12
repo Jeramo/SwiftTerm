@@ -106,11 +106,22 @@ class CaretView: UIView {
         layer.removeAllAnimations()
         layer.opacity = 1
         blinkResumeTimer?.invalidate()
-        blinkResumeTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
+        // Same UITrackingRunLoopMode gotcha as the renderer's
+        // cursorBlinkTimer and the accessory-bar auto-repeat timer:
+        // Timer.scheduledTimer attaches in .default, which is
+        // suspended during scroll tracking. If the user typed and then
+        // immediately began scrolling, the resume timer would stall
+        // through the entire drag and the caret would stay solid past
+        // its intended ~600ms window. Build via init() + RunLoop.main
+        // .add(_:forMode: .common) so it stays alive through user
+        // interaction.
+        let timer = Timer(timeInterval: duration, repeats: false) { [weak self] _ in
             guard let self = self else { return }
             self.blinkResumeTimer = nil
             self.updateCursorStyle()
         }
+        blinkResumeTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     func updateAnimation (to: Bool) {

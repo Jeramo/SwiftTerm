@@ -1886,7 +1886,19 @@ extension TerminalView {
         // to true; if feedFinish then runs `suspendDisplayUpdates()` and
         // calls back here, the short-circuit would leave the link paused
         // forever. Unpause first, then dedupe the flag write.
-        link.isPaused = false
+        //
+        // Safe-read the IUO. setupOptions's TerminalDelegate fan-out
+        // (setBackgroundColor → colorsChanged → here) runs during view
+        // init; if a caller reorders setup() so display updates land
+        // after options, `link` is still nil at this point and the
+        // force-unwrap SIGTRAPs (TestFlight build 27, iPhone17,2 /
+        // iOS 26.4.2). queuePendingDisplay does nothing meaningful
+        // pre-link anyway — the next setupDisplayUpdates() call will
+        // unpause the link as part of normal init. Skip cleanly here
+        // rather than crashing.
+        if let link = link as CADisplayLink? {
+            link.isPaused = false
+        }
         if pendingDisplay { return }
         pendingDisplay = true
 #else

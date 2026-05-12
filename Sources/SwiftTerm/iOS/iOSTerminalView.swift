@@ -439,27 +439,32 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // Terminus and Blink do.
         scrollsToTop = false
 
-        // setupOptions must run first: it constructs the Terminal +
-        // CaretView + SelectionService and, through the
-        // `terminal.backgroundColor = Color.defaultBackground` path
-        // inside the shared AppleTerminalView.setupOptions(width:height:),
-        // triggers the TerminalDelegate.setBackgroundColor callback that
-        // assigns _nativeBg. Anything below this line that wants to
-        // inspect _nativeBg (setupKeyboardButtonColors), `terminal`, or
-        // `selection` now sees real values.
+        // Ordering is constrained by three real dependencies, none
+        // documented before launch crashes surfaced them:
         //
-        // Before this reorder, setupKeyboardButtonColors ran first and
-        // its automatic-keyboard-appearance branch force-unwrapped a
-        // still-nil _nativeBg, SIGTRAP'ing every cold launch (TestFlight
-        // build 25, iPhone17,2 / iOS 26.4.2). The previous commit
-        // (c749efc) added a defensive guard inside
-        // setupKeyboardButtonColors so the call sequence can't crash
-        // even if a future contributor re-orders these helpers — this
-        // commit removes the underlying dependency rather than just
-        // surviving it.
+        //  1. setupDisplayUpdates creates `link` (a CADisplayLink IUO).
+        //     setupOptions's TerminalDelegate.setBackgroundColor
+        //     callback fan-outs to colorsChanged → queuePendingDisplay
+        //     → link.isPaused = false. If link is still nil at that
+        //     point, SIGTRAP — TestFlight build 27 hit this.
+        //
+        //  2. setupOptions seeds _nativeBg via the same delegate
+        //     callback. setupKeyboardButtonColors reads _nativeBg in
+        //     its automatic-keyboard-appearance branch. Before the
+        //     defensive guard in c749efc, build 25 SIGTRAP'd on a
+        //     nil _nativeBg here. The guard now catches it, but the
+        //     dependency order is still respected so the call path
+        //     never relies on the guard in practice.
+        //
+        //  3. setupAccessoryView builds a TerminalAccessory whose
+        //     setupUI() calls back into setupKeyboardButtonColors,
+        //     so accessory setup must come AFTER button colors.
+        //
+        // Correct order under all three: display link → options →
+        // keyboard colors → rest of the cosmetic helpers → accessory.
+        setupDisplayUpdates ();
         setupOptions ()
         setupKeyboardButtonColors()
-        setupDisplayUpdates ();
         setupProgressBar()
         setupGestures ()
         setupLinkReportingInteractions()

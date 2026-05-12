@@ -775,6 +775,54 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         queuePendingDisplay()
     }
 
+    /// Standard iPad/Mac text-editing shortcuts. Returned via keyCommands
+    /// (not handled in pressesBegan) so iOS:
+    ///  - Routes them BEFORE the pressesBegan key event pipeline, so
+    ///    ⌘C/⌘V/⌘A act as Copy/Paste/Select All instead of being
+    ///    forwarded to the remote shell as raw key events.
+    ///  - Shows them in the press-and-hold-⌘ discoverability overlay
+    ///    on iPad, with the localized titles.
+    ///
+    /// Cached because UIKit queries `keyCommands` on every keypress
+    /// against the responder chain; rebuilding three UIKeyCommand
+    /// objects per press is wasted allocation. Gating to availability
+    /// happens through canPerformAction (Copy needs selection, Paste
+    /// needs a clipboard string).
+    private lazy var cachedTerminalKeyCommands: [UIKeyCommand] = {
+        let copyCmd = UIKeyCommand(title: "Copy",
+                                   image: nil,
+                                   action: #selector(copy(_:)),
+                                   input: "c",
+                                   modifierFlags: .command,
+                                   discoverabilityTitle: "Copy")
+        let pasteCmd = UIKeyCommand(title: "Paste",
+                                    image: nil,
+                                    action: #selector(paste(_:)),
+                                    input: "v",
+                                    modifierFlags: .command,
+                                    discoverabilityTitle: "Paste")
+        let selectAllCmd = UIKeyCommand(title: "Select All",
+                                        image: nil,
+                                        action: #selector(selectAll(_:)),
+                                        input: "a",
+                                        modifierFlags: .command,
+                                        discoverabilityTitle: "Select All")
+        let commands = [copyCmd, pasteCmd, selectAllCmd]
+        // iOS 15 changed the default: keyboard events go to text input
+        // FIRST, then to key commands. For a terminal we want our
+        // Copy/Paste/Select All to win over text-input handling
+        // (otherwise ⌘V could be mistaken for an attempt to insert
+        // a "V" character with the command modifier as a kitty event).
+        if #available(iOS 15.0, visionOS 1.0, *) {
+            for c in commands { c.wantsPriorityOverSystemBehavior = true }
+        }
+        return commands
+    }()
+
+    open override var keyCommands: [UIKeyCommand]? {
+        return cachedTerminalKeyCommands
+    }
+
     @objc
     public override func canPerformAction(
         _ action: Selector,

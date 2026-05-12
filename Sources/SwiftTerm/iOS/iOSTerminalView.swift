@@ -1983,7 +1983,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             applyAutomaticKeyboardAppearance()
             applyAutomaticCaretColor()
             applyAutomaticScrollIndicatorStyle()
+            applyAutomaticAccessoryButtonColors()
         }
+    }
+
+    /// Re-derive the accessory-bar button palette from the new
+    /// terminal background and rebuild the accessory's subviews so
+    /// the live buttons pick up the new colors. Without the rebuild
+    /// step, the palette would only apply to future accessory
+    /// presentations (next keyboard show) — existing buttons keep
+    /// their initial colors.
+    private func applyAutomaticAccessoryButtonColors() {
+        setupKeyboardButtonColors()
+        terminalAccessory?.setupUI()
     }
 
     /// Pick a scroll indicator style that contrasts with the
@@ -3619,7 +3631,25 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         func getColor (_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> UIColor {
             return UIColor (red: r/255.0, green: g/255.0, blue: b/255.0, alpha: 1.0)
         }
-        if traitCollection.userInterfaceStyle == .dark {
+        // Match the keyboard / caret / scroll-indicator auto-theming
+        // family: when automaticKeyboardAppearance is on, drive button
+        // colors from terminal background luma instead of system trait
+        // collection. Without this, a dark terminal in a light-mode
+        // system showed a *light* accessory bar sitting on top of the
+        // *dark* keyboard we now produce — visibly mismatched, the
+        // bar looked like it belonged to a different app.
+        let isDark: Bool
+        if automaticKeyboardAppearance {
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            if _nativeBg.getRed(&r, green: &g, blue: &b, alpha: &a) {
+                isDark = (0.299 * r + 0.587 * g + 0.114 * b) < 0.45
+            } else {
+                isDark = traitCollection.userInterfaceStyle == .dark
+            }
+        } else {
+            isDark = traitCollection.userInterfaceStyle == .dark
+        }
+        if isDark {
             buttonBackgroundColor = UIColor (red: 150/255.0, green: 150/255.0, blue: 150/255.0, alpha: 1)
             buttonShadowColor = UIColor (red: 26/255.0, green: 26/255.0, blue: 26/255.0, alpha: 1)
             buttonColor = .white

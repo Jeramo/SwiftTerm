@@ -799,7 +799,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     @objc public override func select (_ sender: Any?)  {
         if let loc = lastLongSelect {
             selection.selectWordOrExpression(at: Position (col: loc.col, row: loc.row), in: terminal.displayBuffer)
-            selection.selectionMode = .character
+            // Keep `.word` mode that selectWordOrExpression set — same
+            // reasoning as the doubleTap handler: a follow-on drag
+            // after picking Select should extend in word increments,
+            // matching the iOS pattern. Was previously force-resetting
+            // to `.character` here, losing the affordance.
             enableSelectionPanGesture()
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }

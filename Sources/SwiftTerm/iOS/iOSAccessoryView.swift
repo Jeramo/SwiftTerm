@@ -445,5 +445,23 @@ class BackgroundSelectedButton: UIButton {
             self.backgroundColor = isSelected ? self.tintColor : color
         }
     }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // styleButton sets cornerRadius + masksToBounds = true for the
+        // rounded-corner look, plus shadowOffset/Radius/Opacity for the
+        // "key edge" effect that iOS native keys have. When masksToBounds
+        // is true the shadow is computed from the layer's rasterized
+        // contents and gets clipped along with everything else unless an
+        // explicit shadowPath is set. Set the path to a rounded rect
+        // matching the layer's corner radius so the shadow renders below
+        // the rounded button outline regardless of clipping. Recomputed
+        // here so it tracks bounds across orientation / size-class
+        // changes.
+        layer.shadowPath = UIBezierPath(
+            roundedRect: bounds,
+            cornerRadius: layer.cornerRadius
+        ).cgPath
+    }
 }
 #endif

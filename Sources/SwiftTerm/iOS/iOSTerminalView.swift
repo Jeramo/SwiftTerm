@@ -717,15 +717,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     @objc open override func paste (_ sender: Any?) {
-        if let start = UIPasteboard.general.string {
-            insertPastedText(start)
-            // Symmetric with the copy haptic: a light tick confirms
-            // the paste landed even when the user's eyes were on the
-            // edit-menu pill that's now dismissing — the streamed
-            // characters at the prompt may arrive after the visual
-            // cue is gone.
-            actionHaptic.impactOccurred()
-        }
+        // Empty clipboard: bail without touching the user's selection.
+        // canPerformAction(.paste:) already gates this on hasStrings
+        // for the menu and ⌘V paths, but a host calling paste(nil)
+        // directly shouldn't have an unrelated side effect of
+        // clearing the on-screen selection when no paste actually
+        // happened.
+        guard let start = UIPasteboard.general.string else { return }
+        insertPastedText(start)
+        // Symmetric with the copy haptic: a light tick confirms
+        // the paste landed even when the user's eyes were on the
+        // edit-menu pill that's now dismissing — the streamed
+        // characters at the prompt may arrive after the visual
+        // cue is gone.
+        actionHaptic.impactOccurred()
         // Match the copy(_:) cleanup: clear selection + tear down
         // the pan recognizer. Previously paste only removed the pan
         // gesture but left selection.active = true, so the selection

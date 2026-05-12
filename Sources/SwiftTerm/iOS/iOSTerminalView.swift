@@ -249,6 +249,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     private var pinchBaseFontSize: CGFloat = 0
     private var pinchLastAppliedSize: CGFloat = 0
     private weak var pinchGesture: UIPinchGestureRecognizer?
+    /// Snapshot of the font size when the view was first configured,
+    /// captured the first time `font` is assigned with a non-zero
+    /// pointSize. Used by the ⌘0 "Actual Size" key command so users
+    /// can always get back to the configured baseline regardless of
+    /// how they pinched or stepped through ⌘=/⌘-.
+    private var defaultFontSize: CGFloat = 0
     var linkHighlightRange: [Terminal.LinkMatch.RowRange]?
     private var lastPointerLocation: CGPoint?
     
@@ -350,6 +356,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return fontSet.normal
         }
         set {
+            // Capture the very first non-zero pointSize as the user's
+            // baseline. ⌘0 "Actual Size" returns here. Subsequent
+            // assignments (pinch, ⌘=/⌘-) don't move the baseline.
+            if defaultFontSize == 0 && newValue.pointSize > 0 {
+                defaultFontSize = newValue.pointSize
+            }
             fontSet = FontSet (font: newValue)
             resetFont()
             selectNone()
@@ -775,6 +787,35 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         queuePendingDisplay()
     }
 
+    /// ⌘= step the font size up by one whole point. Clamped to
+    /// pinchMaximumFontSize so users can't run away from the bounds
+    /// configured for pinch-zoom.
+    @objc func increaseFontSize(_ sender: Any?) {
+        let current = font.pointSize
+        let target = min(pinchMaximumFontSize, (current + 1).rounded())
+        guard target != current else { return }
+        font = font.withSize(target)
+        actionHaptic.impactOccurred()
+    }
+
+    /// ⌘- step the font size down by one whole point.
+    @objc func decreaseFontSize(_ sender: Any?) {
+        let current = font.pointSize
+        let target = max(pinchMinimumFontSize, (current - 1).rounded())
+        guard target != current else { return }
+        font = font.withSize(target)
+        actionHaptic.impactOccurred()
+    }
+
+    /// ⌘0 return to the configured baseline font size (captured the
+    /// first time `font` was assigned with a non-zero pointSize).
+    @objc func resetFontSize(_ sender: Any?) {
+        let target = defaultFontSize > 0 ? defaultFontSize : font.pointSize
+        guard target != font.pointSize else { return }
+        font = font.withSize(target)
+        actionHaptic.impactOccurred()
+    }
+
     /// Standard iPad/Mac text-editing shortcuts. Returned via keyCommands
     /// (not handled in pressesBegan) so iOS:
     ///  - Routes them BEFORE the pressesBegan key event pipeline, so
@@ -807,7 +848,29 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                                         input: "a",
                                         modifierFlags: .command,
                                         discoverabilityTitle: "Select All")
-        let commands = [copyCmd, pasteCmd, selectAllCmd]
+        // Font size shortcuts — Safari/Notes/Photos pattern. ⌘= is what
+        // ⌘+ actually produces on a US keyboard (= is the unshifted key);
+        // iOS's discoverability overlay renders it as "⌘ +" so users
+        // see the conventional symbol regardless.
+        let zoomInCmd = UIKeyCommand(title: "Increase Font Size",
+                                     image: nil,
+                                     action: #selector(increaseFontSize(_:)),
+                                     input: "=",
+                                     modifierFlags: .command,
+                                     discoverabilityTitle: "Increase Font Size")
+        let zoomOutCmd = UIKeyCommand(title: "Decrease Font Size",
+                                      image: nil,
+                                      action: #selector(decreaseFontSize(_:)),
+                                      input: "-",
+                                      modifierFlags: .command,
+                                      discoverabilityTitle: "Decrease Font Size")
+        let resetCmd = UIKeyCommand(title: "Actual Size",
+                                    image: nil,
+                                    action: #selector(resetFontSize(_:)),
+                                    input: "0",
+                                    modifierFlags: .command,
+                                    discoverabilityTitle: "Actual Size")
+        let commands = [copyCmd, pasteCmd, selectAllCmd, zoomInCmd, zoomOutCmd, resetCmd]
         // iOS 15 changed the default: keyboard events go to text input
         // FIRST, then to key commands. For a terminal we want our
         // Copy/Paste/Select All to win over text-input handling

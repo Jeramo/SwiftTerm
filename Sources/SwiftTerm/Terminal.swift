@@ -2723,6 +2723,10 @@ open class Terminal {
                             line [colTarget+col] = lr [col]
                         }
                     }
+                    let targetBottom = min(buffer.rows - 1, rowTarget + (bottom - top))
+                    if rowTarget <= targetBottom {
+                        updateRange(startLine: rowTarget, endLine: targetBottom)
+                    }
                 }
             }
         }
@@ -2744,6 +2748,7 @@ open class Terminal {
                         line [col] = fillData
                     }
                 }
+                updateRange(startLine: top, endLine: bottom)
             }
         } else {
             log ("Not implemented CSI x with collect: collect=\(collect) and pars=\(pars)")
@@ -2855,6 +2860,7 @@ open class Terminal {
                     line [col] = fillData
                 }
             }
+            updateRange(startLine: top, endLine: bottom)
         }
     }
 
@@ -2887,6 +2893,7 @@ open class Terminal {
                     line [col] = cd
                 }
             }
+            updateRange(startLine: top, endLine: bottom)
         }
     }
     /**

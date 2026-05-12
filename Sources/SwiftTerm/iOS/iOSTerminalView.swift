@@ -843,6 +843,44 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         set {}
     }
 
+    /// Surface the edit-menu actions through the VoiceOver rotor too.
+    /// Without these, a VoiceOver user could read the terminal but had
+    /// no path to copy text from it or paste into it — direct-touch
+    /// mode would dump them at the long-press gesture which is fiddly
+    /// under VO. The actions mirror canPerformAction so we only
+    /// surface what's currently meaningful.
+    open override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
+        get {
+            var actions: [UIAccessibilityCustomAction] = []
+            if selection.active, let selectedText = getSelection(), !selectedText.isEmpty {
+                actions.append(UIAccessibilityCustomAction(name: "Copy") { [weak self] _ in
+                    self?.copy(nil)
+                    return true
+                })
+                actions.append(UIAccessibilityCustomAction(name: "Look Up") { [weak self] _ in
+                    self?.presentLookUp(for: selectedText)
+                    return true
+                })
+                actions.append(UIAccessibilityCustomAction(name: "Share…") { [weak self] _ in
+                    self?.presentSelectionShareSheet(selectedText)
+                    return true
+                })
+            }
+            if UIPasteboard.general.hasStrings {
+                actions.append(UIAccessibilityCustomAction(name: "Paste") { [weak self] _ in
+                    self?.paste(nil)
+                    return true
+                })
+            }
+            actions.append(UIAccessibilityCustomAction(name: "Select All") { [weak self] _ in
+                self?.selectAll(nil)
+                return true
+            })
+            return actions
+        }
+        set {}
+    }
+
     @objc func resetCmd(_ sender: Any?) {
         terminal.cmdReset()
         selection.selectNone()

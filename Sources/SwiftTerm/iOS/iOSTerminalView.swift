@@ -3727,9 +3727,21 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // *dark* keyboard we now produce — visibly mismatched, the
         // bar looked like it belonged to a different app.
         let isDark: Bool
-        if automaticKeyboardAppearance {
+        // _nativeBg is declared TTColor! and is only assigned later in
+        // setup(), via setupOptions(). setup() calls
+        // setupKeyboardButtonColors() *before* setupOptions(), so during
+        // the very first call (from init → setup) _nativeBg is still
+        // nil. Reading .getRed on the IUO crashed every cold launch
+        // (TestFlight build 25 SIGTRAP'd here on iPhone17,2 / iOS 26.4.2).
+        // Treat a not-yet-initialized background as "fall back to the
+        // trait collection," which matches what the explicit
+        // getRed-failed branch already does. Subsequent calls (after
+        // setupOptions() or a setter-driven re-evaluation) take the
+        // luma path normally.
+        let bg: TTColor? = _nativeBg
+        if automaticKeyboardAppearance, let bg {
             var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-            if _nativeBg.getRed(&r, green: &g, blue: &b, alpha: &a) {
+            if bg.getRed(&r, green: &g, blue: &b, alpha: &a) {
                 isDark = (0.299 * r + 0.587 * g + 0.114 * b) < 0.45
             } else {
                 isDark = traitCollection.userInterfaceStyle == .dark

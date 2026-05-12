@@ -3687,6 +3687,29 @@ extension TerminalView {
         return UIDropProposal(operation: .copy)
     }
 
+    /// Retarget the drop animation so the dragged card flies into the
+    /// terminal cursor cell — where the dropped text will actually be
+    /// inserted at the prompt — instead of the system default (where
+    /// the user's finger released). Matches Notes/Mail: the drop card
+    /// snaps to the caret, making the connection between "I let go
+    /// here" and "the text appeared at the prompt" obvious.
+    @objc open func dropInteraction(_ interaction: UIDropInteraction,
+                                    previewForDropping item: UIDragItem,
+                                    withDefault defaultPreview: UITargetedDragPreview) -> UITargetedDragPreview? {
+        guard cellDimension.width > 0, cellDimension.height > 0 else {
+            return defaultPreview
+        }
+        let buffer = terminal.displayBuffer
+        let cursorRow = buffer.y + buffer.yDisp
+        let cursorCol = buffer.x
+        let cursorCenter = CGPoint(
+            x: (CGFloat(cursorCol) + 0.5) * cellDimension.width,
+            y: (CGFloat(cursorRow) + 0.5) * cellDimension.height
+        )
+        let target = UIDragPreviewTarget(container: self, center: cursorCenter)
+        return defaultPreview.retargetedPreview(with: target)
+    }
+
     /// Load the dropped text on the main thread (loadObjects guarantees
     /// completion-on-main) and feed it through the shared
     /// insertPastedText pipeline so bracketed-paste framing and ESC

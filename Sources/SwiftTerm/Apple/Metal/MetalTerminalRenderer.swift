@@ -363,7 +363,21 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             lastSetDrawableSize = desiredDrawableSize
         }
         let cursorStyle = terminalView.terminal.options.cursorStyle
-        let shouldBlink = isBlinkStyle(cursorStyle) && !terminalView.terminal.cursorHidden
+        // Stop blinking when the terminal isn't first responder.
+        // Native UITextView's caret stops blinking the moment the
+        // view loses focus (drawing as hollow on macOS, vanishing on
+        // iOS). Without the hasFocus guard here, the Metal-drawn
+        // cursor kept blinking on tabs / sessions the user wasn't
+        // actively in, drawing the eye to the wrong terminal.
+        // The CaretView UIView path already calls disableAnimations
+        // from resignFirstResponder; this lines the Metal path up
+        // with that behavior.
+        #if os(macOS)
+        let hasFocusForBlink = terminalView.caretViewTracksFocus ? terminalView.hasFocus : true
+        #else
+        let hasFocusForBlink = terminalView.caretViewTracksFocus ? terminalView.isFirstResponder : true
+        #endif
+        let shouldBlink = isBlinkStyle(cursorStyle) && !terminalView.terminal.cursorHidden && hasFocusForBlink
         updateCursorBlinkTimer(shouldBlink: shouldBlink)
 
 #if canImport(os)

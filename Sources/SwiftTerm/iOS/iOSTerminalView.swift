@@ -1331,7 +1331,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         } else {
             let hit = calculateTapHit(gesture: gestureRecognizer).grid
             selection.selectWordOrExpression(at: hit, in: terminal.displayBuffer)
-            selection.selectionMode = .character
+            // Keep `.word` mode that selectWordOrExpression set. Native
+            // UITextView: double-tap selects the word and the following
+            // drag extends in WHOLE-WORD increments, not character-by-
+            // character — that's why "double-tap-and-drag to select a
+            // sentence" feels chunky and intentional on iOS. The line
+            // here used to force mode back to `.character`, which made
+            // post-double-tap drags extend character-by-character and
+            // lose that affordance entirely.
             enableSelectionPanGesture()
             grabHaptic.impactOccurred()
             selectionHaptics.prepare()

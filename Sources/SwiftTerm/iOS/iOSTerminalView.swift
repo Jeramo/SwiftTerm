@@ -2362,7 +2362,28 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         #if os(visionOS)
         1.0
         #else
-        UIScreen.main.scale
+        // Use the scale of the display this view is actually on rather
+        // than UIScreen.main.scale. The latter is deprecated in iOS 16
+        // and always reports the device's main screen — wrong on
+        // external-display windows, wrong on the iPad's display when an
+        // app spans two screens, and wrong on Mac Catalyst. Cell
+        // pixel-snapping (AppleTerminalView.computeCellDimensions) and
+        // the Metal renderer's glyph rasterization both feed off this
+        // scale, so a mismatch produced subpixel seams between cells
+        // and softer glyphs on the wrong display.
+        //
+        // Prefer the view's traitCollection.displayScale (iOS 8+,
+        // always tracks the trait environment the view lives in).
+        // It can be 0.0 before the view is attached to a window — fall
+        // back to the window's scene screen, and finally to the legacy
+        // path so pre-window callers still get a sensible value rather
+        // than dividing by zero.
+        let traitScale = traitCollection.displayScale
+        if traitScale > 0 { return traitScale }
+        if let sceneScale = window?.windowScene?.screen.scale, sceneScale > 0 {
+            return sceneScale
+        }
+        return UIScreen.main.scale
         #endif
     }
     

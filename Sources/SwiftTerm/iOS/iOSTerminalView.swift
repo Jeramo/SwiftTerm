@@ -1890,6 +1890,34 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             colorsChanged()
             settingBg = false
             applyAutomaticKeyboardAppearance()
+            applyAutomaticCaretColor()
+        }
+    }
+
+    /// Pick a caret color with enough contrast against the current
+    /// terminal background. Updates `caretView.defaultCaretColor`
+    /// (so shell-triggered `setCursorColor(nil)` resets to the right
+    /// color too) and follows-through to `caretColor` only if the
+    /// current value matches the previous default — i.e., the host
+    /// has never manually overridden it. This preserves explicit
+    /// caretColor assignments while still picking sensible automatic
+    /// colors for the common case.
+    private func applyAutomaticCaretColor() {
+        guard automaticCaretColor else { return }
+        guard let caretView = caretView else { return }
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard _nativeBg.getRed(&r, green: &g, blue: &b, alpha: &a) else { return }
+        let luma = 0.299 * r + 0.587 * g + 0.114 * b
+        // White-on-dark, near-black on light, both alpha 1. UIColor.gray
+        // (the previous default) was 50% luminance which disappears
+        // against any mid-gray theme.
+        let derived: UIColor = luma < 0.5
+            ? UIColor(white: 0.92, alpha: 1.0)
+            : UIColor(white: 0.20, alpha: 1.0)
+        let prevDefault = caretView.defaultCaretColor
+        caretView.defaultCaretColor = derived
+        if caretView.caretColor == prevDefault {
+            caretView.caretColor = derived
         }
     }
 
@@ -2356,6 +2384,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// to `.default` (which itself tracks the system trait collection).
     /// Hosts that want pinned keyboardAppearance can flip this off.
     public var automaticKeyboardAppearance: Bool = true
+    /// When true (default), the caret color auto-tracks
+    /// `nativeBackgroundColor`: a light caret on dark themes, dark
+    /// caret on light themes. CaretView's stock default was
+    /// UIColor.gray, which disappears against several common
+    /// terminal palettes (mid-gray Solarized backgrounds, default
+    /// dark-grey tmux statuses). Hosts that want a fixed caret color
+    /// can flip the flag off and set caretColor manually.
+    public var automaticCaretColor: Bool = true
     public var returnKeyType: UIReturnKeyType = .`default`
     
     // This is wrong, but I can not find another good one

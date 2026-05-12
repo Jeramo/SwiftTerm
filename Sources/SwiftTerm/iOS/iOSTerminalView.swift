@@ -1040,6 +1040,32 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return UIMenu(children: [open, copy, share])
     }
 
+    /// Present the iOS system Reference Library (dictionary + system
+    /// fallback to web search when no definition exists). Stripped of
+    /// surrounding whitespace because dictionaryHasDefinition matches
+    /// exact form. UIReferenceLibraryViewController is iOS 5+, so this
+    /// lives in the main class alongside the share sheet for iOS-14+
+    /// availability with the long-press URL menu too.
+    fileprivate func presentLookUp(for selectedText: String) {
+        let trimmed = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let ref = UIReferenceLibraryViewController(term: trimmed)
+        if let popover = ref.popoverPresentationController {
+            popover.sourceView = self
+            popover.sourceRect = lastLongSelectRegion
+            popover.permittedArrowDirections = [.up, .down]
+        }
+        var responder: UIResponder? = self
+        while let r = responder {
+            if let vc = r as? UIViewController {
+                vc.present(ref, animated: true)
+                actionHaptic.impactOccurred()
+                return
+            }
+            responder = r.next
+        }
+    }
+
     /// Present a native iOS share sheet for `text`. Lives on the main
     /// class (not the iOS-16+ UIEditMenuInteraction extension) because
     /// UIActivityViewController is iOS 6+ and we call this from both the
@@ -3683,6 +3709,18 @@ extension TerminalView: UIEditMenuInteractionDelegate {
         // gives us the standard iOS pill menu with localized titles.
         var actions = suggestedActions
         if let selectedText = getSelection(), !selectedText.isEmpty {
+            // Look Up: present the system reference library (dictionary
+            // + iOS-managed web-search fallback when no definition).
+            // Native Notes/Safari/Mail offer this for any non-empty
+            // selection; the terminal didn't, so users had to copy then
+            // paste into Spotlight or Safari to look up an unfamiliar
+            // command name, error message, or term in the output.
+            let lookUpImage = UIImage(systemName: "character.book.closed")
+            let lookUp = UIAction(title: "Look Up", image: lookUpImage) { [weak self] _ in
+                self?.presentLookUp(for: selectedText)
+            }
+            actions.append(lookUp)
+
             // Native iOS apps surface a Share entry whenever there's a text
             // selection (Notes, Safari, Mail). The terminal didn't, so users
             // had to Copy → switch apps → paste into a Share UI. With this

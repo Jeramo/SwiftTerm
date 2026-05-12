@@ -1993,6 +1993,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
+    /// Tracks whether the accessory bar was last built with the dark
+    /// palette. We only rebuild buttons (setupUI is heavy: removes
+    /// every subview and reconstructs the list) when the dark/light
+    /// flip actually changes. Within a single mode, two different
+    /// dark backgrounds (Solarized Dark vs. Dracula) produce the
+    /// same button palette anyway, so rebuilding would be churn.
+    private var lastAccessoryIsDarkPalette: Bool? = nil
+
     /// Re-derive the accessory-bar button palette from the new
     /// terminal background and rebuild the accessory's subviews so
     /// the live buttons pick up the new colors. Without the rebuild
@@ -2001,7 +2009,25 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// their initial colors.
     private func applyAutomaticAccessoryButtonColors() {
         setupKeyboardButtonColors()
-        terminalAccessory?.setupUI()
+        // Compute the resolved dark/light state with the same logic
+        // setupKeyboardButtonColors used, so we only call the heavy
+        // setupUI() when the mode flipped — not on every minor bg
+        // tweak within the same mode (e.g., a shell streaming
+        // multiple OSC 11 background changes within Solarized Dark
+        // shouldn't churn the accessory bar).
+        let isDarkNow: Bool = {
+            if automaticKeyboardAppearance {
+                var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+                if _nativeBg.getRed(&r, green: &g, blue: &b, alpha: &a) {
+                    return (0.299 * r + 0.587 * g + 0.114 * b) < 0.45
+                }
+            }
+            return traitCollection.userInterfaceStyle == .dark
+        }()
+        if lastAccessoryIsDarkPalette != isDarkNow {
+            lastAccessoryIsDarkPalette = isDarkNow
+            terminalAccessory?.setupUI()
+        }
     }
 
     /// Pick a scroll indicator style that contrasts with the

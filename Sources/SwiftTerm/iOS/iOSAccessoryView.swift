@@ -147,24 +147,44 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         repeatTask?.cancel()
     }
     
+    // Auto-repeat closures capture self weakly so the repeating Timer
+    // (held by the main runloop) doesn't form a runloop→Timer→rc→self
+    // cycle. With a strong self capture, holding an arrow past the
+    // 600ms threshold meant only an explicit cancelTimer() could break
+    // the cycle — keyboard dismissal mid-hold, host-driven accessory
+    // teardown, or any path that doesn't fire .touchUpInside leaked
+    // the accessory plus its repeatCommand forever.
     @objc func up (_ sender: UIButton)
     {
-        startTimerForKeypress { self.terminalView?.sendKeyUp () }
+        startTimerForKeypress { [weak self] in self?.terminalView?.sendKeyUp () }
     }
-    
+
     @objc func down (_ sender: UIButton)
     {
-        startTimerForKeypress { self.terminalView?.sendKeyDown () }
+        startTimerForKeypress { [weak self] in self?.terminalView?.sendKeyDown () }
     }
-    
+
     @objc func left (_ sender: UIButton)
     {
-        startTimerForKeypress { self.terminalView?.sendKeyLeft() }
+        startTimerForKeypress { [weak self] in self?.terminalView?.sendKeyLeft() }
     }
-    
+
     @objc func right (_ sender: UIButton)
     {
-        startTimerForKeypress { self.terminalView?.sendKeyRight() }
+        startTimerForKeypress { [weak self] in self?.terminalView?.sendKeyRight() }
+    }
+
+    deinit {
+        // Backstop for the lifecycle smell pattern (mirrors CaretView's
+        // deinit fix in c0d779f and TerminalView's in the previous
+        // commit). With the weak-self capture in the auto-repeat
+        // closures above, the runloop no longer pins this accessory
+        // alive, so deinit is reachable on view tear-down. Drop the
+        // repeating Timer + 600ms hold Task immediately rather than
+        // waiting on a touchUpInside that may never come (keyboard
+        // dismissed mid-hold, accessory swapped by the host).
+        repeatTimer?.invalidate()
+        repeatTask?.cancel()
     }
 
 

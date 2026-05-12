@@ -566,6 +566,11 @@ class SelectionService: CustomDebugStringConvertible {
             end = position
         }
         selectionMode = .word
+        // selectingRows tracks the same idea as selectionMode but
+        // gates the legacy shiftExtend(row:col:) row-snap path; keep
+        // them in lock-step on every mode transition so shift-select
+        // after a word-select doesn't accidentally snap to rows.
+        selectingRows = false
         setActiveAndNotify()
     }
     
@@ -577,6 +582,13 @@ class SelectionService: CustomDebugStringConvertible {
         if active {
             active = false
             selectionMode = .character
+            // Keep selectingRows in sync with selectionMode. Without
+            // this reset, a sequence of (triple-tap → clear-by-tap →
+            // double-tap → shift-select) left selectingRows stuck at
+            // true from the triple-tap path, which made
+            // shiftExtend(row:col:) snap the new endpoint to row
+            // boundaries even though the user was now in word mode.
+            selectingRows = false
         }
     }
     

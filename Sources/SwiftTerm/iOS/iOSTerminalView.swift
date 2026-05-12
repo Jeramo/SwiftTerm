@@ -3880,6 +3880,12 @@ extension TerminalView {
     @objc open func dragInteraction(_ interaction: UIDragInteraction,
                                     sessionWillBegin session: UIDragSession) {
         hideContextMenuIfVisible()
+        // If the drag preempted the edit-menu delegate call (drag won
+        // the race against menu presentation), pendingLongPressURL is
+        // still set from the long-press that initiated the drag. Clear
+        // it so the *next* unrelated long-press (which might land on
+        // plain text) doesn't inherit a stale URL menu config.
+        pendingLongPressURL = nil
     }
 
     /// Terminal output can't be "moved" — the buffer history is

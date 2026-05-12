@@ -439,9 +439,27 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // Terminus and Blink do.
         scrollsToTop = false
 
+        // setupOptions must run first: it constructs the Terminal +
+        // CaretView + SelectionService and, through the
+        // `terminal.backgroundColor = Color.defaultBackground` path
+        // inside the shared AppleTerminalView.setupOptions(width:height:),
+        // triggers the TerminalDelegate.setBackgroundColor callback that
+        // assigns _nativeBg. Anything below this line that wants to
+        // inspect _nativeBg (setupKeyboardButtonColors), `terminal`, or
+        // `selection` now sees real values.
+        //
+        // Before this reorder, setupKeyboardButtonColors ran first and
+        // its automatic-keyboard-appearance branch force-unwrapped a
+        // still-nil _nativeBg, SIGTRAP'ing every cold launch (TestFlight
+        // build 25, iPhone17,2 / iOS 26.4.2). The previous commit
+        // (c749efc) added a defensive guard inside
+        // setupKeyboardButtonColors so the call sequence can't crash
+        // even if a future contributor re-orders these helpers — this
+        // commit removes the underlying dependency rather than just
+        // surviving it.
+        setupOptions ()
         setupKeyboardButtonColors()
         setupDisplayUpdates ();
-        setupOptions ()
         setupProgressBar()
         setupGestures ()
         setupLinkReportingInteractions()

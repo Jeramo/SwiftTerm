@@ -714,6 +714,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // release the link explicitly so the runloop releases the proxy
         // immediately instead of waiting on the next tick.
         link?.invalidate()
+        // progressReportTimer is a Timer.scheduledTimer with a [weak self]
+        // capture, so it doesn't retain us — but a fired-once 15s timer
+        // stays pinned to the main runloop until it fires or is
+        // invalidated. A view torn down mid-progress-report leaves a
+        // ~15s runloop-pinned Timer firing a no-op. Cheap to drop.
+        progressReportTimer?.invalidate()
+        // panTask is a Task with a [weak self] callback, so its body
+        // bails when self is gone — but the Task itself keeps awaking
+        // every 100ms forever, invoking a no-op closure, until
+        // explicitly cancelled. .ended/.cancelled gesture transitions
+        // call stopSelectionTimer; a view that's dropped mid-drag (host
+        // pool eviction, sudden tear-down) never sees those, so cancel
+        // here as a backstop.
+        panTask?.cancel()
     }
     
     @objc open override func paste (_ sender: Any?) {

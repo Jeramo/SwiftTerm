@@ -77,9 +77,37 @@ extension UIColor {
 }
 
 extension UIImage {
+    /// Cross-platform parity helper for the Mac NSImage(cgImage:size:)
+    /// initializer. UIImage has no built-in init that takes both a
+    /// CGImage and a point size — its convenience inits expose a
+    /// `scale` factor instead. Map the caller's intended point size
+    /// to the equivalent scale: UIImage.size = pixelDim / scale, so
+    /// scale = pixelDim / pointDim makes the resulting UIImage
+    /// report `size` as its point dimensions.
+    ///
+    /// Was: `self.init(cgImage: cgImage, scale: -1, orientation: .up)`.
+    /// Negative scale is undefined for UIImage (the docs only specify
+    /// positive values), and the `size` argument was ignored entirely
+    /// — so callers in AppleTerminalView.swift (terminal images:
+    /// Sixel, kitty graphics, iTerm protocol) got an arbitrary-scale
+    /// UIImage whose `.size` did not match `size`. On macOS the
+    /// NSExtensions counterpart respected `size` correctly, so the
+    /// two platforms produced different geometry from the same call.
     public convenience init (cgImage: CGImage, size: CGSize) {
-        self.init (cgImage: cgImage, scale: -1, orientation: .up)
-        //self.init (cgImage: cgImage)
+        let pixelW = CGFloat(cgImage.width)
+        let pixelH = CGFloat(cgImage.height)
+        let resolvedScale: CGFloat
+        if size.width > 0, size.height > 0 {
+            // Take the larger of the two axis scales so the result
+            // fits within `size` on both axes (never exceeds it).
+            // Clamp to >= 1: UIImage with scale < 1 effectively
+            // upscales the bitmap, which produces blurry inline
+            // terminal images.
+            resolvedScale = max(1.0, max(pixelW / size.width, pixelH / size.height))
+        } else {
+            resolvedScale = 1.0
+        }
+        self.init(cgImage: cgImage, scale: resolvedScale, orientation: .up)
     }
 }
 

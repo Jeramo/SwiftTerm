@@ -3647,6 +3647,28 @@ extension TerminalView {
         hideContextMenuIfVisible()
     }
 
+    /// Customize the lift preview so the drag shows just the selection
+    /// rect, not a default full-view snapshot. Without this, the lift
+    /// animates the entire terminal upward (chrome and all), which both
+    /// looks wrong and obscures what's being dragged. With this, the
+    /// user sees a small card of just the selected text rise out of the
+    /// scrollback, masked to the selection bounds — same animation
+    /// shape as Safari/Notes drag-out.
+    @objc open func dragInteraction(_ interaction: UIDragInteraction,
+                                    previewForLifting item: UIDragItem,
+                                    session: UIDragSession) -> UITargetedDragPreview? {
+        guard selection.active else { return nil }
+        let rect = makeContextMenuRegionForSelection()
+        let parameters = UIDragPreviewParameters()
+        parameters.visiblePath = UIBezierPath(rect: rect)
+        // Background matches the terminal so the lifted card doesn't
+        // peek as a white slab under the rendered glyphs.
+        parameters.backgroundColor = nativeBackgroundColor
+        let target = UIDragPreviewTarget(container: self,
+                                         center: CGPoint(x: rect.midX, y: rect.midY))
+        return UITargetedDragPreview(view: self, parameters: parameters, target: target)
+    }
+
     // MARK: - UIDropInteractionDelegate
 
     /// Accept only text drops. Image/file drops aren't meaningful in a

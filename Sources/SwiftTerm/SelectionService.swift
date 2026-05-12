@@ -203,7 +203,6 @@ class SelectionService: CustomDebugStringConvertible {
                 newPos.col = 0
             }
         }
-        print("SelectinRows=\(selectingRows)")
         shiftExtend (bufferPosition: newPos)
     }
     
@@ -267,15 +266,28 @@ class SelectionService: CustomDebugStringConvertible {
         guard let pivot = pivot else {
             return
         }
-        
+
         var adjustedPosition = bufferPosition
-        
+
         // If we're in word selection mode, extend to word boundaries
         if selectionMode == .word {
             let direction = Position.compare(bufferPosition, pivot) == .before ? -1 : 1
             adjustedPosition = extendToWordBoundary(position: bufferPosition, in: terminal.displayBuffer, direction: direction)
+        } else if selectionMode == .row {
+            // Triple-tap-and-drag: extend in whole-row increments,
+            // matching native UITextView's triple-tap-drag-to-select-
+            // paragraphs behavior. Without this branch, after a triple
+            // tap a drag would extend by character even though the
+            // initial selection was a full row — felt inconsistent
+            // and made multi-row selection fiddly.
+            switch Position.compare(bufferPosition, pivot) {
+            case .before:
+                adjustedPosition = Position(col: 0, row: bufferPosition.row)
+            case .after, .equal:
+                adjustedPosition = Position(col: terminal.cols - 1, row: bufferPosition.row)
+            }
         }
-        
+
         switch Position.compare (adjustedPosition, pivot) {
         case .after:
             start = pivot

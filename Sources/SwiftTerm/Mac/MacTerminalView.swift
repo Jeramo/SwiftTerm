@@ -180,11 +180,24 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return fontSet.normal
         }
         set {
+            // Capture the very first non-zero pointSize as the user's
+            // baseline. resetFontSize() / ⌘0 "Actual Size" returns
+            // here. Subsequent assignments (trackpad pinch, ⌘+/⌘-)
+            // don't move the baseline. Mirrors iOS so hosts get the
+            // same semantics across platforms.
+            if defaultFontSize == 0 && newValue.pointSize > 0 {
+                defaultFontSize = newValue.pointSize
+            }
             fontSet = FontSet (font: newValue)
             resetFont()
             selectNone()
         }
     }
+
+    /// Snapshot of the font size when the view was first configured,
+    /// captured the first time `font` is assigned with a non-zero
+    /// pointSize. Used by resetFontSize() / the ⌘0 action.
+    private var defaultFontSize: CGFloat = 0
 
     /// Pinch-to-zoom: a trackpad pinch over the terminal changes font
     /// size live, the way Terminal.app, iTerm2, and Terminus do.
@@ -1788,6 +1801,12 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return true
         case #selector(copy(_:)):
             return selection.active
+        case #selector(increaseFontSize(_:)):
+            return fontSet.normal.pointSize < pinchMaximumFontSize
+        case #selector(decreaseFontSize(_:)):
+            return fontSet.normal.pointSize > pinchMinimumFontSize
+        case #selector(resetFontSize(_:) as (Any?) -> Void):
+            return defaultFontSize > 0 && fontSet.normal.pointSize != defaultFontSize
         default:
             print ("Validating User Interface Item: \(item)")
             return false
@@ -2289,9 +2308,57 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         addCursorRect(bounds, cursor: .iBeam)
     }
     
+    /// Reset font *size* (not face) to the baseline captured the first
+    /// time `font` was assigned. Was: `fontSet = FontSet(font:
+    /// FontSet.defaultFont)`, which replaced the whole FontSet with
+    /// the framework default monospaced face — a host that called
+    /// setFonts(normal:bold:italic:boldItalic:) with a custom font
+    /// then called resetFontSize lost the face entirely, ending up
+    /// with the default font at whatever size. Mirrors iOS's ⌘0
+    /// "Actual Size" semantics.
     public func resetFontSize ()
     {
-        fontSet = FontSet (font: FontSet.defaultFont)
+        let target = defaultFontSize > 0 ? defaultFontSize : fontSet.normal.pointSize
+        guard target != fontSet.normal.pointSize,
+              let newFont = NSFont(descriptor: fontSet.normal.fontDescriptor, size: target) else {
+            return
+        }
+        font = newFont
+    }
+
+    /// Responder-chain action: ⌘+ "Make Text Bigger" / View > Make
+    /// Text Bigger. Steps the font size up by one whole point,
+    /// clamped to pinchMaximumFontSize so users can't run away from
+    /// the bounds configured for pinch-zoom. Parity with iOS line
+    /// `increaseFontSize(_:)`.
+    @objc public func increaseFontSize(_ sender: Any?) {
+        let current = fontSet.normal.pointSize
+        let target = min(pinchMaximumFontSize, (current + 1).rounded())
+        guard target != current,
+              let newFont = NSFont(descriptor: fontSet.normal.fontDescriptor, size: target) else {
+            return
+        }
+        font = newFont
+    }
+
+    /// Responder-chain action: ⌘- "Make Text Smaller" / View > Make
+    /// Text Smaller. Steps the font size down by one whole point,
+    /// clamped to pinchMinimumFontSize.
+    @objc public func decreaseFontSize(_ sender: Any?) {
+        let current = fontSet.normal.pointSize
+        let target = max(pinchMinimumFontSize, (current - 1).rounded())
+        guard target != current,
+              let newFont = NSFont(descriptor: fontSet.normal.fontDescriptor, size: target) else {
+            return
+        }
+        font = newFont
+    }
+
+    /// Responder-chain action: ⌘0 "Actual Size" / View > Make Text
+    /// Normal Size. Returns to the baseline captured the first time
+    /// `font` was assigned.
+    @objc public func resetFontSize(_ sender: Any?) {
+        resetFontSize()
     }
     
     func getImageScale () -> CGFloat {

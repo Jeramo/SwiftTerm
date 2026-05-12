@@ -1775,13 +1775,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         lastPointerLocation = request.location
         reportLinkIfNeeded(at: request.location, modifiers: request.modifiers, force: false)
         updateLinkHighlightIfNeeded(at: request.location, modifiers: request.modifiers, force: false)
-        // Hit-test for a URL under the pointer. Long-press intent gating
-        // doesn't apply on hover, so force-resolve with hasCommandModifier=true
-        // (matches what tap-to-open does for keyboard-modifier-required
-        // links — the user pointed at it, so consider it a candidate).
+        // Hit-test for a URL under the pointer. Honor the actual
+        // modifier state from request.modifiers: in
+        // linkHighlightMode .hoverWithModifier / .alwaysWithModifier,
+        // a URL is only "visible as clickable" when Cmd is held —
+        // and we want the pointer style to match the URL highlight
+        // (both either showing or both hidden), not contradict it.
+        // Without honoring the modifier here, the iBeam morphed to
+        // pill over URLs even when no highlight was painted, which
+        // told the user "clickable" while the visuals said otherwise.
         let hit = calculateTapHit(point: request.location).grid
+        let hasCmd = request.modifiers.contains(.command)
         if cellDimension.width > 0, cellDimension.height > 0,
-           linkForClick(at: hit, hasCommandModifier: true) != nil {
+           linkForClick(at: hit, hasCommandModifier: hasCmd) != nil {
             // One-cell hot region centered on the URL cell under the
             // pointer. iOS re-queries regionFor as the pointer moves,
             // so the moment it exits this box we fall back to the

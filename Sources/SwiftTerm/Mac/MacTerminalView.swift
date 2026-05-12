@@ -185,7 +185,76 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             selectNone()
         }
     }
-    
+
+    /// Pinch-to-zoom: a trackpad pinch over the terminal changes font
+    /// size live, the way Terminal.app, iTerm2, and Terminus do.
+    /// Parity with the iOS UIPinchGestureRecognizer wiring in
+    /// iOSTerminalView.setupGestures / handleFontPinch.
+    /// Hosts that want their own pinch handling can flip this off.
+    public var pinchToZoomEnabled: Bool = true
+    /// Bounds for the live-pinch font size — same defaults as iOS so
+    /// behavior matches across platforms.
+    public var pinchMinimumFontSize: CGFloat = 8
+    public var pinchMaximumFontSize: CGFloat = 32
+    private var pinchBaseFontSize: CGFloat = 0
+    private var pinchLastAppliedSize: CGFloat = 0
+    /// NSEvent.magnification is a *delta* between successive events
+    /// (unlike UIPinchGestureRecognizer.scale, which is absolute since
+    /// gesture start). Accumulate the delta across .changed events so
+    /// the clamp/quantize math operates on a single virtual scale.
+    private var pinchCumulativeMagnification: CGFloat = 0
+
+    public override func magnify(with event: NSEvent) {
+        guard pinchToZoomEnabled else {
+            super.magnify(with: event)
+            return
+        }
+        switch event.phase {
+        case .began:
+            pinchBaseFontSize = fontSet.normal.pointSize
+            pinchLastAppliedSize = pinchBaseFontSize
+            pinchCumulativeMagnification = 0
+        case .changed:
+            guard pinchBaseFontSize > 0 else { return }
+            pinchCumulativeMagnification += event.magnification
+            let scale = 1.0 + pinchCumulativeMagnification
+            let raw = pinchBaseFontSize * scale
+            let clamped = min(max(raw, pinchMinimumFontSize), pinchMaximumFontSize)
+            // Quantize to half-point steps, same trade-off as iOS:
+            // small enough to feel continuous, large enough to keep
+            // the FontSet rebuild + reflow rate sane (each font swap
+            // currently nukes selection and rebuilds the atlas, so
+            // every gesture .changed tick at 60-120Hz would thrash
+            // both).
+            let stepped = (clamped * 2).rounded() / 2
+            if abs(stepped - pinchLastAppliedSize) >= 0.5 {
+                pinchLastAppliedSize = stepped
+                if let newFont = NSFont(descriptor: fontSet.normal.fontDescriptor,
+                                        size: stepped) {
+                    font = newFont
+                }
+            }
+        case .ended, .cancelled:
+            // Settle to a whole-point size so glyphs land on the
+            // pixel grid — half-point sizes can produce subpixel
+            // softness on certain monospace faces. Mirrors the iOS
+            // .ended/.cancelled/.failed branch.
+            if pinchBaseFontSize > 0 {
+                let settled = pinchLastAppliedSize.rounded()
+                if abs(settled - fontSet.normal.pointSize) >= 0.5,
+                   let newFont = NSFont(descriptor: fontSet.normal.fontDescriptor,
+                                        size: settled) {
+                    font = newFont
+                }
+            }
+            pinchBaseFontSize = 0
+            pinchLastAppliedSize = 0
+            pinchCumulativeMagnification = 0
+        default:
+            break
+        }
+    }
+
     public init(frame: CGRect, font: NSFont?) {
         self.fontSet = FontSet (font: font ?? FontSet.defaultFont)
 

@@ -14,6 +14,31 @@ import Foundation
  * the terminal's buffer.  They are guaranteed to be ordered.
  */
 class SelectionService: CustomDebugStringConvertible {
+    /// Predicate used by double-tap word selection and shift/drag word-
+    /// boundary extension. Beyond `isLetter || isNumber`, includes
+    /// characters that are part of the common terminal "word" people
+    /// expect to select as one unit:
+    ///  - `.` `_` `-` (identifiers, filenames, kebab/snake-case)
+    ///  - `/` (file paths, URL paths)
+    ///  - `:` (URL schemes, host:port, namespaces)
+    ///  - `~` (home prefix)
+    ///  - `@` (user@host, package@version)
+    ///
+    /// The stock UITextView word definition stops at `/`, so
+    /// double-tapping in `/usr/bin/python` selected just one segment.
+    /// In a terminal context, the whole path is what the user means
+    /// by "this word." Adding these chars matches what iTerm2 / Blink
+    /// / Terminus all do by default.
+    static func isTerminalWordCharacter(_ ch: Character) -> Bool {
+        if ch.isLetter || ch.isNumber { return true }
+        switch ch {
+        case ".", "_", "-", "/", ":", "~", "@":
+            return true
+        default:
+            return false
+        }
+    }
+
     var terminal: Terminal
     
     public init (terminal: Terminal)
@@ -497,7 +522,7 @@ class SelectionService: CustomDebugStringConvertible {
         case " ":
             includeFunc = { ch in ch == " " }
         case let ch where ch.isLetter || ch.isNumber:
-            includeFunc = { ch in ch.isLetter || ch.isNumber || ch == "." || ch == "_" || ch == "-" }
+            includeFunc = { ch in SelectionService.isTerminalWordCharacter(ch) }
         default:
             return position
         }
@@ -547,7 +572,7 @@ class SelectionService: CustomDebugStringConvertible {
             // Select all white space
             simpleScanSelection (from: position, in: buffer) { ch in ch == " " }
         case let ch where ch.isLetter || ch.isNumber:
-            simpleScanSelection (from: position, in: buffer) { ch in ch.isLetter || ch.isNumber || ch == "." || ch == "_" || ch == "-" }
+            simpleScanSelection (from: position, in: buffer) { ch in SelectionService.isTerminalWordCharacter(ch) }
         case "{":
             fallthrough
         case "(":

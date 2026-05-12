@@ -1684,6 +1684,23 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         lastPointerLocation = request.location
         reportLinkIfNeeded(at: request.location, modifiers: request.modifiers, force: false)
         updateLinkHighlightIfNeeded(at: request.location, modifiers: request.modifiers, force: false)
+        // Hit-test for a URL under the pointer. Long-press intent gating
+        // doesn't apply on hover, so force-resolve with hasCommandModifier=true
+        // (matches what tap-to-open does for keyboard-modifier-required
+        // links — the user pointed at it, so consider it a candidate).
+        let hit = calculateTapHit(point: request.location).grid
+        if cellDimension.width > 0, cellDimension.height > 0,
+           linkForClick(at: hit, hasCommandModifier: true) != nil {
+            // One-cell hot region centered on the URL cell under the
+            // pointer. iOS re-queries regionFor as the pointer moves,
+            // so the moment it exits this box we fall back to the
+            // default region (and the iBeam style below).
+            let cellRect = CGRect(x: CGFloat(hit.col) * cellDimension.width,
+                                  y: CGFloat(hit.row) * cellDimension.height,
+                                  width: cellDimension.width,
+                                  height: cellDimension.height)
+            return UIPointerRegion(rect: cellRect, identifier: "link" as NSString)
+        }
         return nil
     }
 
@@ -1694,6 +1711,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// content and gives no hint that the area accepts selection.
     @available(iOS 13.4, visionOS 1.0, *)
     public func pointerInteraction(_ interaction: UIPointerInteraction, styleFor region: UIPointerRegion) -> UIPointerStyle? {
+        // URL regions: return the system default (nil) so the pointer
+        // morphs back to the standard pill — the same "this is
+        // clickable" hint Safari uses over hyperlinks. Without this
+        // the iBeam would persist over URLs, hiding the fact that
+        // they can be opened with a click.
+        if let id = region.identifier as? NSString, id == "link" {
+            return nil
+        }
         // Beam length tracks current cell height so the pointer scales
         // sensibly when the user pinch-zooms the font. Fall back to a
         // sane default if cellDimension hasn't been computed yet.

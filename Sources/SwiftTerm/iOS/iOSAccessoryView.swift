@@ -198,9 +198,21 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
                                                                       height: 400)),
                                          terminalView: terminalView)
             #else
+            // Source the sizing screen from the terminal's window scene
+            // rather than UIScreen.main. UIScreen.main is deprecated in
+            // iOS 16 and reports the *full device* screen even when the
+            // app is running in Split View, Slide Over, or Stage Manager
+            // — the alt-keyboard inputView was then wider than its host
+            // window and clipped at the edge. UIWindowScene.screen is
+            // iOS 13+, matches the fork's minimum. Fall back to the
+            // terminal view's own bounds (which the host has already
+            // sized to whatever window/split it's in) and finally to a
+            // reasonable default if the view isn't in a window yet.
+            let screenBounds = tv.window?.windowScene?.screen.bounds
+                ?? (tv.bounds.size != .zero ? tv.bounds : CGRect(x: 0, y: 0, width: 320, height: 480))
             tv.inputView = KeyboardView (frame: CGRect (origin: CGPoint.zero,
-                                                        size: CGSize (width: UIScreen.main.bounds.width,
-                                                                      height: max((UIScreen.main.bounds.height / 5),140))),
+                                                        size: CGSize (width: screenBounds.width,
+                                                                      height: max((screenBounds.height / 5),140))),
                                          terminalView: terminalView)
             #endif
         } else {

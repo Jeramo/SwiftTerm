@@ -320,10 +320,21 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     func setupFocusNotification() {
-        becomeMainObserver = NotificationCenter.default.addObserver(forName: .init("NSWindowDidBecomeMainNotification"), object: nil, queue: nil) { [unowned self] notification in
-            self.caretView.updateCursorStyle()
+        // [weak self] rather than [unowned self]: the observer closure
+        // is retained by NotificationCenter, not by the view. deinit
+        // *does* removeObserver, but a notification posted on the
+        // window of a parallel close path (or a notification queued
+        // mid-deinit) can still fire the block with a freed self
+        // under [unowned], producing an EXC_BAD_ACCESS. [weak] turns
+        // that into a no-op tick, matching the standard NotificationCenter
+        // pattern Apple now recommends (and what UIKit's newer trait
+        // observer APIs avoid altogether by passing self as a closure
+        // parameter — see registerForTraitChanges).
+        becomeMainObserver = NotificationCenter.default.addObserver(forName: .init("NSWindowDidBecomeMainNotification"), object: nil, queue: nil) { [weak self] _ in
+            self?.caretView.updateCursorStyle()
         }
-        resignMainObserver = NotificationCenter.default.addObserver(forName: .init("NSWindowDidResignMainNotification"), object: nil, queue: nil) { [unowned self] notification in
+        resignMainObserver = NotificationCenter.default.addObserver(forName: .init("NSWindowDidResignMainNotification"), object: nil, queue: nil) { [weak self] _ in
+            guard let self else { return }
             self.caretView.disableAnimations()
             self.caretView.updateView()
         }

@@ -268,6 +268,23 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
 
+    /// Smart-zoom gesture (double-tap-with-two-fingers on the
+    /// trackpad). Safari uses it to toggle between fit-to-page and
+    /// 100 %, Maps to recenter / zoom to a sensible level. A
+    /// terminal has no equivalent "fit content" concept, so reuse
+    /// the gesture for the next-most-expected behavior: jump back
+    /// to the captured baseline font size — the same target as
+    /// resetFontSize / ⌘0 "Actual Size". Pairs with the continuous
+    /// magnify(with:) handler above so a user can pinch around
+    /// then double-tap to snap back.
+    public override func smartMagnify(with event: NSEvent) {
+        guard pinchToZoomEnabled else {
+            super.smartMagnify(with: event)
+            return
+        }
+        resetFontSize()
+    }
+
     public init(frame: CGRect, font: NSFont?) {
         self.fontSet = FontSet (font: font ?? FontSet.defaultFont)
 

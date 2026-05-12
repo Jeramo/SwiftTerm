@@ -720,6 +720,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         disableSelectionPanGesture()
         if let start = UIPasteboard.general.string {
             insertPastedText(start)
+            // Symmetric with the copy haptic: a light tick confirms
+            // the paste landed even when the user's eyes were on the
+            // edit-menu pill that's now dismissing — the streamed
+            // characters at the prompt may arrive after the visual
+            // cue is gone.
+            actionHaptic.impactOccurred()
         }
     }
 
@@ -751,7 +757,18 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     @objc open override func copy(_ sender: Any?) {
-        UIPasteboard.general.string = selection.getSelectedText()
+        // canPerformAction(.copy:) gates this on selection.active, so
+        // the normal menu/⌘C paths never reach here without a real
+        // selection. The guard handles the corner case where a host
+        // calls copy(nil) directly: previously it would overwrite the
+        // pasteboard with an empty string (selection.getSelectedText
+        // returns "" when the range is degenerate), silently
+        // clobbering whatever the user had on the clipboard.
+        let text = selection.getSelectedText()
+        guard !text.isEmpty else {
+            return
+        }
+        UIPasteboard.general.string = text
         // Light confirmation tick: iOS 16+ already shows a brief "copied"
         // pill from the system, but a haptic tells users the action
         // landed even when their eyes are still on the selection that's

@@ -797,6 +797,52 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         lastLongSelect = nil
     }
     
+    // MARK: - Accessibility
+
+    /// Mark the terminal as a single VoiceOver element representing the
+    /// visible viewport text. Without this, the rendered glyphs are
+    /// invisible to screen readers — VoiceOver could only navigate the
+    /// inputAccessoryView buttons, not the actual terminal content.
+    open override var isAccessibilityElement: Bool {
+        get { true }
+        set {}
+    }
+
+    open override var accessibilityLabel: String? {
+        get { "Terminal" }
+        set {}
+    }
+
+    /// Return the visible viewport text (yDisp..yDisp+rows). Computed
+    /// on demand because terminal output streams continuously and
+    /// caching would go stale instantly. Skipping scrollback (the
+    /// rows above yDisp) keeps VoiceOver's announcement focused on
+    /// what's actually on screen, like a sighted user would see.
+    open override var accessibilityValue: String? {
+        get {
+            let buffer = terminal.displayBuffer
+            guard buffer.rows > 0 else { return nil }
+            let topRow = buffer.yDisp
+            let bottomRow = min(buffer.lines.count - 1, topRow + buffer.rows - 1)
+            guard topRow <= bottomRow, buffer.cols > 0 else { return nil }
+            return terminal.getDisplayText(
+                start: Position(col: 0, row: topRow),
+                end: Position(col: buffer.cols - 1, row: bottomRow)
+            )
+        }
+        set {}
+    }
+
+    /// Combine .staticText (read-only text content) with
+    /// .allowsDirectInteraction (let VoiceOver pass touches through
+    /// instead of intercepting for gesture navigation, so users can
+    /// still tap to focus, drag to select, and pinch to zoom while
+    /// VoiceOver is running). Native Notes uses the same pair.
+    open override var accessibilityTraits: UIAccessibilityTraits {
+        get { [.staticText, .allowsDirectInteraction] }
+        set {}
+    }
+
     @objc func resetCmd(_ sender: Any?) {
         terminal.cmdReset()
         selection.selectNone()

@@ -376,6 +376,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// pre-background draw data.
     @objc private func handleAppWillEnterForeground() {
         metalCacheGeneration &+= 1
+        print("[ResumeDiag] willEnterForeground fired, gen=\(metalCacheGeneration), metalView=\(metalView != nil), bounds=\(bounds.size)")
         requestMetalDisplay()
     }
 #endif

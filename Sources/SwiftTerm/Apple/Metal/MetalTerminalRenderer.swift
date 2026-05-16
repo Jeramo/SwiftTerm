@@ -608,6 +608,17 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                                        generation: terminalView.metalCacheGeneration)
         let signatureChanged = signature != cacheSignature
         if signatureChanged {
+            let prev = cacheSignature
+            let reason: String
+            if prev == nil { reason = "first-frame" }
+            else if prev!.generation != signature.generation { reason = "generation(\(prev!.generation)→\(signature.generation))" }
+            else if prev!.viewWidth != signature.viewWidth || prev!.viewHeight != signature.viewHeight { reason = "viewSize" }
+            else if prev!.cellWidth != signature.cellWidth || prev!.cellHeight != signature.cellHeight { reason = "cellDim" }
+            else if prev!.yDisp != signature.yDisp { reason = "yDisp(\(prev!.yDisp)→\(signature.yDisp))" }
+            else if prev!.rows != signature.rows || prev!.cols != signature.cols { reason = "grid" }
+            else if prev!.isAltBuffer != signature.isAltBuffer { reason = "altBuffer" }
+            else { reason = "other" }
+            print("[ResumeDiag] signatureChanged reason=\(reason), cachedRows=\(rowCache.count)")
             rowCache.removeAll()
             cacheSignature = signature
         }

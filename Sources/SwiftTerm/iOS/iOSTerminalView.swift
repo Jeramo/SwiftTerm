@@ -227,6 +227,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     private var useMetalRenderer = false
     var metalDirtyRange: ClosedRange<Int>?
 
+    /// Bumped on `UIApplication.willEnterForegroundNotification` so the
+    /// first post-resume draw treats the rowCache as stale. Folded into
+    /// `CacheSignature` in `MetalTerminalRenderer`; any change forces a
+    /// full visible rebuild. Fixes the stale-mosaic frame on foreground
+    /// restore when the system's redraw pass beats the post-resume parser
+    /// flush to the GPU.
+    var metalCacheGeneration: UInt64 = 0
+
     /// Whether the terminal view is currently using the Metal GPU renderer.
     ///
     /// Returns `true` after a successful call to ``setUseMetal(_:)`` with
@@ -349,8 +357,28 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         setupGestures ()
         setupLinkReportingInteractions()
         setupAccessoryView ()
+#if canImport(MetalKit)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppWillEnterForeground),
+            name: UIApplication.willEnterForegroundNotification,
+            object: nil)
+#endif
         didFinishSetup = true
     }
+
+#if canImport(MetalKit)
+    /// Invalidate the Metal renderer's rowCache on foreground restore.
+    /// Without this, the system's redraw-your-layer pass can fire before
+    /// the post-resume parser flush has updated the terminal buffer,
+    /// producing a stale-mosaic frame where rows in `metalDirtyRange`
+    /// repaint correctly but every other row renders from the cached
+    /// pre-background draw data.
+    @objc private func handleAppWillEnterForeground() {
+        metalCacheGeneration &+= 1
+        requestMetalDisplay()
+    }
+#endif
 
 #if canImport(MetalKit)
     /// Enables or disables GPU-accelerated rendering via Metal.

@@ -120,6 +120,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Limitations: image caching is basic; GPU path is still evolving.
     private var useMetalRenderer = false
     var metalDirtyRange: ClosedRange<Int>?
+
+    /// Mirror of the iOS field so the shared Metal renderer can read it
+    /// unconditionally; macOS never bumps it (no scene background races).
+    var metalCacheGeneration: UInt64 = 0
     var pendingMetalDisplay: Bool = false
     /// Controls how the Metal renderer builds GPU buffers each frame.
     ///

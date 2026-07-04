@@ -724,7 +724,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         if row < 0 {
             return (Position(col: 0, row: 0), toInt (point))
         }
-        return (Position(col: min (max (0, col), terminal.cols-1), row: min (max (0, row), terminal.rows-1)), toInt (point))
+        // Clamp to the bottom VISIBLE buffer row, not the screen height. The
+        // returned row is buffer-relative, so once there's scrollback
+        // (yDisp > 0) the on-screen rows live above rows-1; a plain rows-1 cap
+        // froze downward selection-handle drags (up worked, down didn't).
+        let maxRow = min (terminal.displayBuffer.yDisp + terminal.rows - 1,
+                          terminal.displayBuffer.lines.count - 1)
+        return (Position(col: min (max (0, col), terminal.cols-1), row: min (max (0, row), maxRow)), toInt (point))
     }
 
     func encodeFlags (release: Bool) -> Int

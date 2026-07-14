@@ -326,8 +326,14 @@ extension TerminalView {
 
     public func synchronizedOutputChanged (source: Terminal, active: Bool)
     {
-        updateScroller()
-        queuePendingDisplay()
+        // Keep the previously rendered frame intact while DEC 2026 is
+        // active. Rendering during the block exposes the application's
+        // intermediate cursor positions even though displayBuffer is frozen.
+        if !active {
+            updateScroller()
+            queuePendingDisplay()
+            terminalDelegate?.scrolled(source: self, position: scrollPosition)
+        }
     }
 
     public func setBackgroundColor(source: Terminal, color: Color) {
@@ -1719,6 +1725,11 @@ extension TerminalView {
     func updateDisplay (notifyAccessibility: Bool)
     {
         defer { pendingDisplay = false }
+        // DEC mode 2026 promises an atomic frame. In particular, do not
+        // reconcile the separate caret view against parser state until ESU.
+        if terminal.synchronizedOutputActive {
+            return
+        }
         updateCursorPosition()
         guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
             if notifyUpdateChanges {
@@ -1834,6 +1845,9 @@ extension TerminalView {
     // It is also cheap, so should be called when new data has been posted or received.
     func queuePendingDisplay ()
     {
+        if terminal.synchronizedOutputActive {
+            return
+        }
         // throttle
         if !pendingDisplay {
             let fps60 = 16670000

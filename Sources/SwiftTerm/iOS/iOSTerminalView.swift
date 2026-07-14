@@ -2198,6 +2198,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     func ensureCaretIsVisible ()
     {
+        guard !terminal.synchronizedOutputActive else { return }
         let displayBuffer = terminal.displayBuffer
         contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
     }
@@ -2696,14 +2697,25 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     open func showCursor(source: Terminal) {
-        guard let caretView else { return }
-        if caretView.superview == nil {
-            addSubview(caretView)
+        // Cursor visibility and position must land in the same render pass.
+        // tmux and full-screen TUIs routinely emit hide/CUP/show while
+        // repainting; mutating the view hierarchy here briefly re-attaches
+        // the blinking caret at its previous frame.
+        queuePendingDisplay()
+#if canImport(MetalKit)
+        if !source.synchronizedOutputActive {
+            queueMetalDisplay()
         }
+#endif
     }
 
     open func hideCursor(source: Terminal) {
-        caretView?.removeFromSuperview()
+        queuePendingDisplay()
+#if canImport(MetalKit)
+        if !source.synchronizedOutputActive {
+            queueMetalDisplay()
+        }
+#endif
     }
     
     open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {

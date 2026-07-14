@@ -2265,21 +2265,23 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func showCursor(source: Terminal) {
-        if useMetalRenderer {
+        // Coalesce hide/CUP/show redraw sequences into the next display
+        // pass so the caret never appears at its previous frame.
+        queuePendingDisplay()
+#if canImport(MetalKit)
+        if !source.synchronizedOutputActive {
             queueMetalDisplay()
-            return
         }
-        if caretView.superview == nil {
-            addSubview(caretView)
-        }
+#endif
     }
 
     open func hideCursor(source: Terminal) {
-        if useMetalRenderer {
+        queuePendingDisplay()
+#if canImport(MetalKit)
+        if !source.synchronizedOutputActive {
             queueMetalDisplay()
-            return
         }
-        caretView.removeFromSuperview()
+#endif
     }
     
     open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {
@@ -2336,6 +2338,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     
     func ensureCaretIsVisible ()
     {
+        guard !terminal.synchronizedOutputActive else { return }
         let displayBuffer = terminal.displayBuffer
         let realCaret = displayBuffer.y + displayBuffer.yBase
         let viewportEnd = displayBuffer.yDisp + displayBuffer.rows

@@ -220,6 +220,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var search: SearchService!
     var debug: UIView?
     var pendingDisplay: Bool = false
+    /// Output received shortly after local input is likely echo or a prompt
+    /// redraw. Track the input time so that response can bypass the normal
+    /// frame-coalescing delay.
+    var lastUserInputUptimeNs: UInt64 = 0
+    let interactiveInputDisplayWindowNs: UInt64 = 150_000_000
+    let interactiveInputDisplayLock = NSLock()
+    var interactiveInputGeneration: UInt64 = 0
+    var displayedInteractiveInputGeneration: UInt64 = 0
 #if canImport(MetalKit)
     var metalView: MTKView?
     var metalRenderer: MetalTerminalRenderer?
@@ -430,6 +438,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             mtkView.framebufferOnly = true
             mtkView.colorPixelFormat = .bgra8Unorm
             mtkView.isUserInteractionEnabled = false
+            mtkView.preferredFramesPerSecond = 120
             let renderer = try MetalTerminalRenderer(view: mtkView, terminalView: self)
             mtkView.delegate = renderer
             if let caretView = caretView {
@@ -459,8 +468,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func setupDisplayUpdates ()
     {
         link = CADisplayLink(target: self, selector: #selector(step))
-            
-        link.add(to: .current, forMode: .default)
+        if #available(iOS 15.0, visionOS 1.0, *) {
+            link.preferredFrameRateRange = CAFrameRateRange(
+                minimum: 60,
+                maximum: 120,
+                preferred: 120
+            )
+        }
+        // Keep terminal frames flowing while UIKit switches the run loop into
+        // tracking mode for touches and scroll gestures.
+        link.add(to: .current, forMode: .common)
         suspendDisplayUpdates()
     }
 
@@ -529,16 +546,29 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     @objc
     func step(displaylink: CADisplayLink) {
         updateDisplay()
+        if !pendingDisplay {
+            link.isPaused = true
+        }
     }
 
     func startDisplayUpdates()
     {
-        link.isPaused = false
+        setDisplayLinkPaused(false)
     }
     
     func suspendDisplayUpdates()
     {
-        link.isPaused = true
+        setDisplayLinkPaused(true)
+    }
+
+    private func setDisplayLinkPaused(_ paused: Bool) {
+        guard !Thread.isMainThread else {
+            link.isPaused = paused
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.link.isPaused = paused
+        }
     }
     
     public func updateUiClosed() {

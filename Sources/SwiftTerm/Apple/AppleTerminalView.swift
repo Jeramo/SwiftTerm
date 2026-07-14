@@ -1724,7 +1724,10 @@ extension TerminalView {
     /// Update visible area
     func updateDisplay (notifyAccessibility: Bool)
     {
-        defer { pendingDisplay = false }
+        // Consume the request before drawing. If a delegate or parser callback
+        // queues another frame reentrantly, that new request remains armed for
+        // the following display-link tick instead of being erased on return.
+        pendingDisplay = false
         // DEC mode 2026 promises an atomic frame. In particular, do not
         // reconcile the separate caret view against parser state until ESU.
         if terminal.synchronizedOutputActive {
@@ -1833,7 +1836,6 @@ extension TerminalView {
     {
         updateDisplay (notifyAccessibility: true)
         updateDebugDisplay()
-        pendingDisplay = false
     }
     
     //
@@ -1845,19 +1847,39 @@ extension TerminalView {
     // It is also cheap, so should be called when new data has been posted or received.
     func queuePendingDisplay ()
     {
+#if os(iOS) || os(visionOS)
+        // Terminal input may be fed from a background thread, but
+        // CADisplayLink and view scheduling are main-thread-only. Queueing
+        // every state transition on main also prevents step() from racing a
+        // parser callback and losing a pending frame.
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.queuePendingDisplay()
+            }
+            return
+        }
+#endif
         if terminal.synchronizedOutputActive {
             return
         }
-        // throttle
-        if !pendingDisplay {
-            let fps60 = 16670000
-            // let fps30 = 16670000*2
-            let fpsDelay = fps60
-            pendingDisplay = true
-            DispatchQueue.main.asyncAfter(
-                deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fpsDelay)),
-                execute: updateDisplay)
-        }
+#if os(iOS) || os(visionOS)
+        // Always wake the display link before deduplicating. Parser callbacks
+        // can mark a display pending during feed(), after which feedFinish()
+        // pauses the link; returning early here would otherwise strand the
+        // pending frame. The link presents on the next 60/120 Hz vsync.
+        link.isPaused = false
+        if pendingDisplay { return }
+        pendingDisplay = true
+#else
+        if pendingDisplay { return }
+        pendingDisplay = true
+        let fpsDelay: UInt64 = 8_333_333
+        DispatchQueue.main.asyncAfter(
+            deadline: DispatchTime(uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + fpsDelay)) { [weak self] in
+                guard let self, self.pendingDisplay else { return }
+                self.updateDisplay()
+            }
+#endif
     }
 
 #if canImport(MetalKit)
@@ -1869,20 +1891,33 @@ extension TerminalView {
     }
 
     func queueMetalDisplay() {
+#if os(iOS) || os(visionOS)
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.queueMetalDisplay()
+            }
+            return
+        }
+#endif
         guard metalView != nil else {
             return
         }
+#if os(iOS) || os(visionOS)
+        // MTKView coalesces invalidations and presents on its own display link.
+        pendingMetalDisplay = false
+        requestMetalDisplay()
+#else
         if !pendingMetalDisplay {
-            let fps60 = 16670000
-            let fpsDelay = fps60
+            let fpsDelay: UInt64 = 8_333_333
             pendingMetalDisplay = true
             DispatchQueue.main.asyncAfter(
-                deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fpsDelay))) { [weak self] in
+                deadline: DispatchTime(uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + fpsDelay)) { [weak self] in
                     guard let self else { return }
                     self.pendingMetalDisplay = false
                     self.metalView?.setNeedsDisplay(self.metalView?.bounds ?? .zero)
                 }
         }
+#endif
     }
 #endif
     
@@ -2078,7 +2113,40 @@ extension TerminalView {
     func feedFinish ()
     {
         suspendDisplayUpdates ()
+        if shouldDisplayImmediatelyAfterUserInput() {
+            displayImmediately()
+            return
+        }
         queuePendingDisplay()
+    }
+
+    private func shouldDisplayImmediatelyAfterUserInput() -> Bool {
+        guard !terminal.synchronizedOutputActive else { return false }
+        let now = DispatchTime.now().uptimeNanoseconds
+        interactiveInputDisplayLock.lock()
+        let lastInput = lastUserInputUptimeNs
+        let inputGeneration = interactiveInputGeneration
+        let alreadyDisplayed = displayedInteractiveInputGeneration == inputGeneration
+        if lastInput > 0,
+           now >= lastInput,
+           !alreadyDisplayed,
+           now - lastInput <= interactiveInputDisplayWindowNs {
+            displayedInteractiveInputGeneration = inputGeneration
+            interactiveInputDisplayLock.unlock()
+            return true
+        }
+        interactiveInputDisplayLock.unlock()
+        return false
+    }
+
+    private func displayImmediately() {
+        guard !Thread.isMainThread else {
+            updateDisplay()
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.updateDisplay()
+        }
     }
     
     /// Sends data to the terminal emulator for interpretation, this can be invoked from a background thread
@@ -2126,6 +2194,10 @@ extension TerminalView {
      */
     public func send(data: ArraySlice<UInt8>)
     {
+        interactiveInputDisplayLock.lock()
+        lastUserInputUptimeNs = DispatchTime.now().uptimeNanoseconds
+        interactiveInputGeneration &+= 1
+        interactiveInputDisplayLock.unlock()
         ensureCaretIsVisible ()
         #if os(iOS) || os(visionOS)
         let sink = TerminalView.textInputDebugSink

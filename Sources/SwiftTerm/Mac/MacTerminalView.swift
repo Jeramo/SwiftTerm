@@ -556,7 +556,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
     
     open func bufferActivated(source: Terminal) {
-        updateScroller ()
+        // `displayBuffer` can still be the old synchronized-output snapshot at
+        // this point. Clear the global freeze and move only the newly active
+        // live buffer to its own tail; the snapshot remains visible until ESU.
+        userScrolling = false
+        source.userScrolling = false
+        source.resetCurrentBufferViewToBottom()
+        if !source.synchronizedOutputActive {
+            updateScroller ()
+        }
     }
     
     open func send(source: Terminal, data: ArraySlice<UInt8>) {
@@ -2179,7 +2187,10 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         
         if terminal.mouseMode.sendMotionEvent() {
             let flags = encodeMouseEvent(with: event, overwriteRelease: true)
-            terminal.sendMotion(buttonFlags: flags, x: hit.grid.col, y: hit.grid.row, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
+            let displayBuffer = terminal.displayBuffer
+            let screenRow = max(0, min(displayBuffer.rows - 1,
+                                       hit.grid.row - displayBuffer.yDisp))
+            terminal.sendMotion(buttonFlags: flags, x: hit.grid.col, y: screenRow, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
         }
     }
     

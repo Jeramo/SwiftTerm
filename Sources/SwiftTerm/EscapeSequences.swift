@@ -134,6 +134,24 @@ public struct EscapeSequences {
     /// End of pasted text when bracketed-paste is enabled (mode 2004)
     /// /// The sequence is `ESC [ 201 ~`
     public static var bracketedPasteEnd: [UInt8] = [0x1b, 0x5b, 0x32, 0x30, 0x31, 0x7e]
+
+    /// Encodes clipboard text for a single outbound terminal write.
+    ///
+    /// In bracketed-paste mode, embedded escape bytes are removed so pasted
+    /// content cannot terminate the paste region early with `ESC [ 201 ~`.
+    static func pastePayload(_ text: String, bracketed: Bool) -> [UInt8] {
+        guard bracketed else { return Array(text.utf8) }
+
+        let sanitized = text.replacingOccurrences(of: "\u{1B}", with: "")
+        var payload: [UInt8] = []
+        payload.reserveCapacity(
+            bracketedPasteStart.count + sanitized.utf8.count + bracketedPasteEnd.count
+        )
+        payload.append(contentsOf: bracketedPasteStart)
+        payload.append(contentsOf: sanitized.utf8)
+        payload.append(contentsOf: bracketedPasteEnd)
+        return payload
+    }
     
     /// Contains an array of 12 values, for the sequence that should be sent in response to an F key being
     /// pressed.   Where F1 should send `cmdF [0]`, F2 should send `cmdF [1]` and so on.

@@ -341,6 +341,14 @@ open class Terminal {
     var isDisplayBufferAlternate: Bool {
         synchronizedOutputBuffer != nil ? synchronizedOutputBufferIsAlternate : isCurrentBufferAlternate
     }
+
+    /// True while a synchronized-output snapshot is showing the buffer that
+    /// was active before a normal/alternate buffer switch. Viewport gestures
+    /// must not apply that snapshot's scrollback row to the new live buffer.
+    public var isDisplayingSynchronizedInactiveBuffer: Bool {
+        synchronizedOutputActive && synchronizedOutputBuffer != nil
+            && synchronizedOutputBufferIsAlternate != isCurrentBufferAlternate
+    }
     
     public var isCurrentBufferAlternate: Bool {
         buffer === altBuffer
@@ -351,6 +359,11 @@ open class Terminal {
     
     // Whether the terminal is operating in application cursor mode
     public var applicationCursor : Bool = false
+
+    /// Whether DEC private mode 1007 (alternate scroll mode) is enabled.
+    /// When active, host views may translate wheel input at the edge of the
+    /// alternate buffer into cursor-up/cursor-down key events.
+    public private(set) var alternateScrollMode: Bool = false
 
     private struct KeyboardModeState {
         var flags: KittyKeyboardFlags = []
@@ -558,13 +571,23 @@ open class Terminal {
             settingCursorColor = false
         }
     }
+
+    /// Tracks the host view's focus even before focus reporting is enabled.
+    /// Applications that turn on DECSET 1004 expect an immediate report of
+    /// the current state instead of waiting for the next focus transition.
+    var reportedFocusState: Bool = true
     
     /// Invoke this command when the terminal receives and loses focus
     public func setTerminalFocus(_ focused: Bool) {
+        reportedFocusState = focused
         if sendFocus {
-            let data: [UInt8] = cc.CSI + [focused ? 0x49 : 0x4f]
-            tdel?.send(source: self, data: data[0...])
+            sendFocusReport()
         }
+    }
+
+    private func sendFocusReport() {
+        let data: [UInt8] = cc.CSI + [reportedFocusState ? 0x49 : 0x4f]
+        tdel?.send(source: self, data: data[0...])
     }
     
     ///
@@ -844,6 +867,7 @@ open class Terminal {
         // modes
         applicationKeypad = false
         applicationCursor = false
+        alternateScrollMode = false
         originMode = false
         
         setMarginMode(false)
@@ -3334,6 +3358,8 @@ open class Terminal {
                 res = mouseProtocol == .utf8 ? modeSet : modeReset
             case 1006:
                 res = mouseProtocol == .sgr ? modeSet : modeReset
+            case 1007:
+                res = alternateScrollMode ? modeSet : modeReset
             case 1015:
                 res = mouseProtocol == .urxvt ? modeSet : modeReset
             case 1016:
@@ -4152,17 +4178,18 @@ open class Terminal {
             case 1004: // send focusin/focusout events
                 sendFocus = false
             case 1005: // utf8 ext mode mouse
+                // Coordinate encodings are independent of tracking modes.
+                // Resetting one must not disable mouse reporting (notably,
+                // Mosh reasserts these modes around resize redraws).
                 mouseProtocol = .x10
-                mouseMode = .off
             case 1006: // sgr ext mode mouse
                 mouseProtocol = .x10
-                mouseMode = .off
+            case 1007: // alternate scroll mode
+                alternateScrollMode = false
             case 1015: // urxvt ext mode mouse
                 mouseProtocol = .x10
-                mouseMode = .off
             case 1016: // sgrPixel mode
                 mouseProtocol = .x10
-                mouseMode = .off
             case 25: // hide cursor
                 hideCursor ()
             case 1048: // alt screen cursor
@@ -4393,12 +4420,15 @@ open class Terminal {
                    // focusin: ^[[I
                    // focusout: ^[[O
                 sendFocus = true
+                sendFocusReport()
             case 1005:
                 // utf8 ext mode mouse
                 mouseProtocol = .utf8
                 break;
             case 1006: // sgr ext mode mouse
                 mouseProtocol = .sgr
+            case 1007: // alternate scroll mode
+                alternateScrollMode = true
             case 1015: // urxvt ext mode mouse
                 mouseProtocol = .urxvt
             case 1016: // sgrPixel mode
@@ -6078,8 +6108,30 @@ open class Terminal {
 
     func setViewYDisp (_ newValue: Int)
     {
-        buffer.yDisp = newValue
-        synchronizedOutputBuffer?.yDisp = newValue
+        if let synchronizedOutputBuffer {
+            let snapshotMaximum = max(0, synchronizedOutputBuffer.lines.count - synchronizedOutputBuffer.rows)
+            synchronizedOutputBuffer.yDisp = max(0, min(newValue, snapshotMaximum))
+
+            // During a buffer switch the snapshot belongs to the buffer that
+            // is being replaced. Never copy its row into the newly active
+            // buffer, whose history depth can be completely different.
+            guard !isDisplayingSynchronizedInactiveBuffer else { return }
+        }
+
+        let liveMaximum = max(0, buffer.lines.count - buffer.rows)
+        buffer.yDisp = max(0, min(newValue, liveMaximum))
+    }
+
+    /// Move only the live buffer's viewport to its tail.
+    ///
+    /// Buffer switches in this fork can keep the previously rendered buffer in
+    /// `synchronizedOutputBuffer` until the replacement frame is complete. A
+    /// view resetting manual scroll state during that interval must not derive
+    /// the new buffer's position from, or mutate, that frozen snapshot: the two
+    /// buffers can have very different scrollback depths.
+    func resetCurrentBufferViewToBottom ()
+    {
+        buffer.yDisp = buffer.yBase
     }
 
     /**

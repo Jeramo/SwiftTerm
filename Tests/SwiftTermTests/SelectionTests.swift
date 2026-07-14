@@ -7,10 +7,23 @@
 
 import Foundation
 import Testing
+#if os(macOS)
+import AppKit
+#endif
 
 @testable import SwiftTerm
 
 final class SelectionTests: TerminalDelegate {
+#if os(macOS)
+    private final class CapturingTerminalView: TerminalView {
+        var sentData: [UInt8] = []
+
+        override func send(source: Terminal, data: ArraySlice<UInt8>) {
+            sentData.append(contentsOf: data)
+        }
+    }
+#endif
+
     func send(source: Terminal, data: ArraySlice<UInt8>) {
         print ("here")
     }
@@ -75,6 +88,101 @@ final class SelectionTests: TerminalDelegate {
         // Scroll all the way back up, check the top-left corner
         view.scrollTo(row: 1)
         #expect(view.calculateMouseHit(at: CGPoint(x: 0, y: 10)).grid.row == 1)
+    }
+
+    @Test func testScrollToFreezesIncomingOutputUntilReturningToBottom() {
+        let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 400, height: 100)))
+
+        for i in 0..<30 {
+            view.terminal.feed(text: "line \(i)\r\n")
+        }
+
+        let bottom = view.terminal.buffer.yBase
+        let target = max(0, bottom - 3)
+        #expect(target < bottom)
+
+        view.scrollTo(row: target)
+        #expect(view.userScrolling)
+        #expect(view.terminal.userScrolling)
+
+        view.terminal.feed(text: "incoming\r\n")
+        #expect(view.terminal.buffer.yDisp == target)
+
+        view.scrollTo(row: view.terminal.buffer.yBase)
+        #expect(!view.userScrolling)
+        #expect(!view.terminal.userScrolling)
+    }
+
+    @Test func testBufferSwitchResetsOnlyLiveViewportDuringSynchronizedOutput() {
+        let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 400, height: 100)))
+        let esc = "\u{1b}"
+
+        for i in 0..<30 {
+            view.terminal.feed(text: "line \(i)\r\n")
+        }
+
+        let target = max(0, view.terminal.buffer.yBase - 3)
+        view.scrollTo(row: target)
+        #expect(view.terminal.userScrolling)
+
+        // Keep the old normal-buffer frame frozen while the alt buffer is
+        // activated, matching the fork's auto-sync buffer switch path.
+        view.terminal.feed(text: "\(esc)[?2026h")
+        view.terminal.feed(text: "\(esc)[?1049h")
+
+        #expect(view.terminal.synchronizedOutputActive)
+        #expect(view.terminal.displayBuffer !== view.terminal.buffer)
+        #expect(view.terminal.displayBuffer.yDisp == target)
+        #expect(view.terminal.buffer.yDisp == view.terminal.buffer.yBase)
+        #expect(view.terminal.buffer.yDisp <= max(0, view.terminal.buffer.lines.count - view.terminal.buffer.rows))
+        #expect(!view.userScrolling)
+        #expect(!view.terminal.userScrolling)
+
+        // A gesture during the frozen cross-buffer frame must not copy the
+        // normal buffer's scrollback row into the new, shallow alt buffer or
+        // re-engage output freezing.
+        view.scrollTo(row: 0)
+        #expect(view.terminal.displayBuffer.yDisp == target)
+        #expect(view.terminal.buffer.yDisp == view.terminal.buffer.yBase)
+        #expect(!view.userScrolling)
+        #expect(!view.terminal.userScrolling)
+
+        // The terminal-level setter is defensive too: direct viewport updates
+        // may move the visible snapshot, but never the inactive live buffer.
+        view.terminal.setViewYDisp(0)
+        #expect(view.terminal.displayBuffer.yDisp == 0)
+        #expect(view.terminal.buffer.yDisp == view.terminal.buffer.yBase)
+
+        view.terminal.feed(text: "\(esc)[?2026l")
+        #expect(view.terminal.displayBuffer === view.terminal.buffer)
+        #expect(view.terminal.buffer.yDisp == view.terminal.buffer.yBase)
+    }
+
+    @Test func testMouseMovedReportsViewportRowWithScrollback() throws {
+        let view = CapturingTerminalView(frame: CGRect(origin: .zero, size: .init(width: 400, height: 100)))
+        let esc = "\u{1b}"
+
+        for i in 0..<30 {
+            view.terminal.feed(text: "line \(i)\r\n")
+        }
+        #expect(view.terminal.displayBuffer.yDisp > 0)
+        view.terminal.feed(text: "\(esc)[?1003h\(esc)[?1006h")
+
+        let event = try #require(NSEvent.mouseEvent(
+            with: .mouseMoved,
+            location: CGPoint(x: view.cellDimension.width / 2,
+                              y: view.bounds.height - view.cellDimension.height / 2),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 0,
+            pressure: 0
+        ))
+
+        view.mouseMoved(with: event)
+        #expect(String(decoding: view.sentData, as: UTF8.self) == "\(esc)[<32;1;1m")
     }
 #endif
 

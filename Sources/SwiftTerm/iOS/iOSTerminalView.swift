@@ -547,24 +547,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     @objc open override func paste (_ sender: Any?) {
         disableSelectionPanGesture()
-        if let start = UIPasteboard.general.string {
-            if terminal.bracketedPasteMode {
-                // Strip ESC from paste content. If the user's clipboard
-                // contains \e[201~ it would prematurely close the bracketed-
-                // paste region and the remainder would be interpreted as
-                // terminal commands -- the classic "bracketed paste
-                // injection" vector. xterm and iTerm2 strip ESC entirely
-                // for the same reason; that's safer than trying to detect
-                // only the specific terminator since any escape inside
-                // paste content corrupts shells that read the buffer in
-                // cooked mode.
-                let sanitized = start.replacingOccurrences(of: "\u{1B}", with: "")
-                send(data: EscapeSequences.bracketedPasteStart[0...])
-                send(txt: sanitized)
-                send(data: EscapeSequences.bracketedPasteEnd[0...])
-            } else {
-                send(txt: start)
-            }
+        if let text = UIPasteboard.general.string {
+            let payload = EscapeSequences.pastePayload(
+                text,
+                bracketed: terminal.bracketedPasteMode
+            )
+            // Keep the opening marker, sanitized clipboard bytes, and closing
+            // marker in one delegate call so transports cannot interleave
+            // another input event inside a bracketed paste.
+            send(data: payload[...])
             queuePendingDisplay()
         }
     }
@@ -736,7 +727,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func encodeFlags (release: Bool) -> Int
     {
         let encodedFlags = terminal.encodeButton(
-            button: 1,
+            // Touch taps and drags represent the primary (left) button.
+            // Encoding them as button 1 reports a middle-click to tmux/TUIs.
+            button: 0,
             release: release,
             shift: false,
             meta: false,
@@ -1258,6 +1251,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         setupOptions(width: bounds.width, height: bounds.height)
         layer.backgroundColor = nativeBackgroundColor.cgColor
         nativeBackgroundColor = UIColor.clear
+        // Glyph cells use a transparent backdrop over the layer color. An
+        // opaque UIScrollView has no alpha channel, which can expose stale
+        // backing-store pixels when scrollback blits and reveals new strips.
+        isOpaque = false
     }
     
     var _nativeFg, _nativeBg: TTColor!
@@ -1354,7 +1351,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var lineLeading: CGFloat = 0
     
     open func bufferActivated(source: Terminal) {
-        updateScroller ()
+        // A buffer switch may be hidden behind the fork's auto synchronized
+        // output snapshot. Reset the newly active live buffer, but leave that
+        // frozen snapshot (and its UIKit offset) untouched until it is revealed.
+        resetManualScrollTracking()
+        if !source.synchronizedOutputActive {
+            updateScroller ()
+        }
     }
     
     open func send(source: Terminal, data: ArraySlice<UInt8>) {
@@ -1461,17 +1464,27 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let displayBuffer = terminal.displayBuffer
         let newSize = CGSize (width: CGFloat (displayBuffer.cols) * cellDimension.width,
                               height: CGFloat (displayBuffer.lines.count) * cellDimension.height)
-        let newOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.yDisp) * cellDimension.height)
         let sizeChanged = contentSize != newSize
-        let offsetChanged = contentOffset != newOffset
-        guard sizeChanged || offsetChanged else { return }
         // Disable implicit animations so the scroll position snaps instantly
         // instead of visibly sliding (e.g., during tmux tab switch redraws).
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
         if sizeChanged  { contentSize = newSize }
-        if offsetChanged { contentOffset = newOffset }
-        CATransaction.commit()
+
+        // While the finger owns the scroll view, and while a frozen viewport
+        // is coasting under momentum, do not fight UIKit's contentOffset.
+        // Continue updating contentSize so newly appended history stays
+        // reachable. If the view is following the tail, keep pinning it during
+        // deceleration so streaming output cannot pull the bottom away.
+        if isTracking || (userScrolling && isDecelerating) {
+            return
+        }
+
+        let rowOffset = CGFloat(displayBuffer.yDisp) * cellDimension.height
+        let desiredY = userScrolling ? rowOffset + manualScrollOffsetWithinRow : rowOffset
+        let newOffset = CGPoint(x: 0, y: min(desiredY, maxContentOffsetY()))
+        setContentOffsetFromTerminal(newOffset)
     }
 
 #if canImport(MetalKit)
@@ -1494,6 +1507,103 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 #endif
     
     var userScrolling = false
+    private var updatingContentOffsetFromTerminal = false
+    private var manualScrollOffsetWithinRow: CGFloat = 0
+
+    private var contentOffsetTolerance: CGFloat {
+        1 / max(backingScaleFactor(), 1)
+    }
+
+    private func maxDisplayRow(in displayBuffer: Buffer) -> Int {
+        max(0, displayBuffer.lines.count - displayBuffer.rows)
+    }
+
+    /// UIKit's true resting maximum can be below `yDisp * cellHeight` when
+    /// the viewport contains a fractional row, and moves with safe-area or
+    /// keyboard insets. Use the same value for positioning and bottom tests.
+    private func maxContentOffsetY() -> CGFloat {
+        max(0, contentSize.height - bounds.height + adjustedContentInset.bottom)
+    }
+
+    private func setContentOffsetFromTerminal(_ newContentOffset: CGPoint) {
+        if abs(contentOffset.x - newContentOffset.x) <= contentOffsetTolerance &&
+            abs(contentOffset.y - newContentOffset.y) <= contentOffsetTolerance {
+            return
+        }
+
+        updatingContentOffsetFromTerminal = true
+        contentOffset = newContentOffset
+        updatingContentOffsetFromTerminal = false
+    }
+
+    private func setManualScrolling(_ enabled: Bool) {
+        userScrolling = enabled
+        terminal.userScrolling = enabled
+        if !enabled {
+            manualScrollOffsetWithinRow = 0
+        }
+    }
+
+    func resetManualScrollOffsetWithinRow() {
+        manualScrollOffsetWithinRow = 0
+    }
+
+    private func resetManualScrollTracking() {
+        setManualScrolling(false)
+        terminal.resetCurrentBufferViewToBottom()
+
+        // During a synchronized buffer switch displayBuffer is deliberately
+        // the old snapshot. Reposition only after synchronizedOutputChanged
+        // reveals the new live buffer; updateScroller() is called there.
+        guard !terminal.synchronizedOutputActive else {
+            return
+        }
+
+        let displayBuffer = terminal.displayBuffer
+        let bottomOffset = min(CGFloat(displayBuffer.yDisp) * cellDimension.height,
+                               maxContentOffsetY())
+        setContentOffsetFromTerminal(CGPoint(x: 0, y: bottomOffset))
+    }
+
+    private func syncYDispFromContentOffset() {
+        guard terminal != nil,
+              !terminal.isDisplayingSynchronizedInactiveBuffer,
+              !updatingContentOffsetFromTerminal,
+              cellDimension.height > 0 else {
+            return
+        }
+
+        let displayBuffer = terminal.displayBuffer
+        let maxRow = maxDisplayRow(in: displayBuffer)
+        let maxOffset = maxContentOffsetY()
+        let offsetY = min(max(contentOffset.y, 0), maxOffset)
+        let atBottomThreshold = max(contentOffsetTolerance, cellDimension.height / 2)
+
+        if offsetY >= maxOffset - atBottomThreshold {
+            if displayBuffer.yDisp != maxRow {
+                terminal.setViewYDisp(maxRow)
+            }
+            setManualScrolling(false)
+            return
+        }
+
+        // Only a physical touch engages the freeze. Once engaged, continue
+        // reconciling yDisp throughout momentum so the terminal model and both
+        // renderers finish on the row where UIKit actually stopped. System- or
+        // layout-driven offsets while following the tail do not engage it.
+        guard isTracking || userScrolling else {
+            return
+        }
+
+        let row = max(0, min(maxRow,
+                             Int(floor((offsetY + contentOffsetTolerance) /
+                                       cellDimension.height))))
+        manualScrollOffsetWithinRow = offsetY - CGFloat(row) * cellDimension.height
+        if displayBuffer.yDisp != row {
+            terminal.setViewYDisp(row)
+        }
+        setManualScrolling(true)
+    }
 
     func getCurrentGraphicsContext () -> CGContext?
     {
@@ -1577,6 +1687,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     open override var contentOffset: CGPoint {
         didSet {
             guard contentOffset != oldValue else { return }
+            syncYDispFromContentOffset()
 #if canImport(MetalKit)
             if useMetalRenderer, metalView != nil {
                 requestMetalDisplay()
@@ -2200,7 +2311,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     {
         guard !terminal.synchronizedOutputActive else { return }
         let displayBuffer = terminal.displayBuffer
-        contentOffset = CGPoint (x: 0, y: CGFloat (displayBuffer.lines.count-displayBuffer.rows)*cellDimension.height)
+        let realCaret = displayBuffer.y + displayBuffer.yBase
+        let viewportEnd = displayBuffer.yDisp + displayBuffer.rows
+
+        if userScrolling || terminal.userScrolling ||
+            realCaret >= viewportEnd || realCaret < displayBuffer.yDisp {
+            resetManualScrollTracking()
+            updateScroller()
+        }
     }
     
     public func deleteBackward() {

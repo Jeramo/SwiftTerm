@@ -23,6 +23,10 @@ final class TerminalTestDelegate: TerminalDelegate {
     func cellSizeInPixels(source: Terminal) -> (width: Int, height: Int)? {
         return cellSizeInPixelsValue
     }
+
+    func clearSentData() {
+        sentData.removeAll(keepingCapacity: true)
+    }
 }
 
 enum TerminalTestHarness {

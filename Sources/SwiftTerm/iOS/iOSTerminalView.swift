@@ -1693,14 +1693,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 requestMetalDisplay()
             }
         } else {
-	    if sizeChanged || originChanged {
+            if sizeChanged {
                 setNeedsDisplay(bounds)
-	    }
+            }
         }
 #else
-        if sizeChanged || originChanged {
+        if sizeChanged {
             setNeedsDisplay(bounds)
-	}
+        }
 #endif
 
         lastLayoutBounds = currentBounds

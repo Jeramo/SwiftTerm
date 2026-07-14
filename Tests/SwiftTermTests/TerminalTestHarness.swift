@@ -3,6 +3,7 @@ import Testing
 
 final class TerminalTestDelegate: TerminalDelegate {
     private(set) var sentData: [[UInt8]] = []
+    private(set) var scrolledYDisps: [Int] = []
     var cellSizeInPixelsValue: (width: Int, height: Int)? = nil
 
     func showCursor(source: Terminal) {}
@@ -11,7 +12,9 @@ final class TerminalTestDelegate: TerminalDelegate {
     func setTerminalIconTitle(source: Terminal, title: String) {}
     func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? { return nil }
     func sizeChanged(source: Terminal) {}
-    func scrolled(source: Terminal, yDisp: Int) {}
+    func scrolled(source: Terminal, yDisp: Int) {
+        scrolledYDisps.append(yDisp)
+    }
     func linefeed(source: Terminal) {}
     func bufferActivated(source: Terminal) {}
     func bell(source: Terminal) {}
@@ -26,6 +29,10 @@ final class TerminalTestDelegate: TerminalDelegate {
 
     func clearSentData() {
         sentData.removeAll(keepingCapacity: true)
+    }
+
+    func clearScrolledEvents() {
+        scrolledYDisps.removeAll(keepingCapacity: true)
     }
 }
 

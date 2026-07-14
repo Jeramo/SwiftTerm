@@ -396,6 +396,119 @@ final class ScreenTests {
         TerminalTestHarness.assertLineText(terminal.buffer, row: 4, equals: "")
     }
 
+    @Test func testFullScreenAlternateScrollUpCapturesHistoryInOneBatch() {
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal(cols: 5, rows: 5, scrollback: 10)
+        terminal.feed(text: "\(esc)[?1049h")
+        terminal.feed(text: "line1\r\nline2\r\nline3\r\nline4\r\nline5")
+        delegate.clearScrolledEvents()
+
+        terminal.feed(text: "\(esc)[2S")
+
+        #expect(terminal.isCurrentBufferAlternate)
+        #expect(terminal.buffer.yBase == 2)
+        #expect(terminal.buffer.yDisp == 2)
+        #expect(bufferLineText(terminal.buffer, lineIndex: 0) == "line1")
+        #expect(bufferLineText(terminal.buffer, lineIndex: 1) == "line2")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "line3")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 1, equals: "line4")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 2, equals: "line5")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 3, equals: "")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 4, equals: "")
+        #expect(delegate.scrolledYDisps == [2])
+    }
+
+    @Test func testFullScreenAlternateScrollUpClampsAndNotifiesOnce() {
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal(cols: 5, rows: 3, scrollback: 10)
+        terminal.feed(text: "\(esc)[?1049h")
+        terminal.feed(text: "one\r\ntwo\r\nthree")
+        delegate.clearScrolledEvents()
+
+        terminal.feed(text: "\(esc)[999S")
+
+        #expect(terminal.buffer.yBase == 3)
+        #expect(bufferLineText(terminal.buffer, lineIndex: 0) == "one")
+        #expect(bufferLineText(terminal.buffer, lineIndex: 1) == "two")
+        #expect(bufferLineText(terminal.buffer, lineIndex: 2) == "three")
+        #expect(TerminalTestHarness.visibleLinesText(buffer: terminal.buffer) == ["", "", ""])
+        #expect(delegate.scrolledYDisps == [3])
+    }
+
+    @Test func testFullScreenAlternateScrollUpBatchesCapacityTrim() {
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal(cols: 5, rows: 3, scrollback: 2)
+        terminal.feed(text: "\(esc)[?1049h")
+        // Terminal initialization resizes the buffers from the legacy default
+        // geometry and can temporarily grow their capacity. Pin the intended
+        // two-line history after that resize so this test exercises trimming.
+        terminal.changeHistorySize(2)
+        terminal.feed(text: "one\r\ntwo\r\nthree")
+        terminal.feed(text: "\(esc)[2S")
+        terminal.feed(text: "\(esc)[1;1Hthree\(esc)[2;1Hfour\(esc)[3;1Hfive")
+        terminal.userScrolling = true
+        terminal.setViewYDisp(1)
+        delegate.clearScrolledEvents()
+
+        terminal.feed(text: "\(esc)[2S")
+
+        #expect(terminal.buffer.lines.count == 5)
+        #expect(terminal.buffer.yBase == 2)
+        #expect(terminal.buffer.yDisp == 0)
+        #expect(terminal.buffer.linesTop == 2)
+        #expect(bufferLineText(terminal.buffer, lineIndex: 0) == "three")
+        #expect(bufferLineText(terminal.buffer, lineIndex: 1) == "four")
+        #expect(bufferLineText(terminal.buffer, lineIndex: 2) == "five")
+        #expect(delegate.scrolledYDisps == [0])
+    }
+
+    @Test func testPrimaryFullScreenScrollUpKeepsDeletionSemantics() {
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal(cols: 5, rows: 3, scrollback: 10)
+        terminal.feed(text: "one\r\ntwo\r\nthree")
+        delegate.clearScrolledEvents()
+
+        terminal.feed(text: "\(esc)[2S")
+
+        #expect(!terminal.isCurrentBufferAlternate)
+        #expect(terminal.buffer.yBase == 0)
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "three")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 1, equals: "")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 2, equals: "")
+        #expect(delegate.scrolledYDisps.isEmpty)
+    }
+
+    @Test func testAlternatePartialRegionScrollUpDoesNotCaptureHistory() {
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal(cols: 5, rows: 5, scrollback: 10)
+        terminal.feed(text: "\(esc)[?1049h")
+        terminal.feed(text: "line1\r\nline2\r\nline3\r\nline4\r\nline5")
+        terminal.feed(text: "\(esc)[2;4r")
+        delegate.clearScrolledEvents()
+
+        terminal.feed(text: "\(esc)[2S")
+
+        #expect(terminal.buffer.yBase == 0)
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "line1")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 1, equals: "line4")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 2, equals: "")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 3, equals: "")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 4, equals: "line5")
+        #expect(delegate.scrolledYDisps.isEmpty)
+    }
+
+    @Test func testAlternateHorizontalMarginScrollUpDoesNotCaptureHistory() {
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal(cols: 5, rows: 3, scrollback: 10)
+        terminal.feed(text: "\(esc)[?1049h")
+        terminal.feed(text: "AAAAA\r\nBBBBB\r\nCCCCC")
+        terminal.feed(text: "\(esc)[?69h")
+        terminal.feed(text: "\(esc)[2;4s")
+        delegate.clearScrolledEvents()
+
+        terminal.feed(text: "\(esc)[S")
+
+        #expect(terminal.buffer.yBase == 0)
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "ABBBA")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 1, equals: "BCCCB")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 2, equals: "C   C")
+        #expect(delegate.scrolledYDisps.isEmpty)
+    }
+
     /// Test scroll down (SD)
     @Test func testScrollDown() {
         let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 5, scrollback: 0)

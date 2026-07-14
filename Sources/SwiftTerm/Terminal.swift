@@ -4825,6 +4825,27 @@ open class Terminal {
         let p = min (rows, max (pars.count == 0 ? 1 : pars [0], 1))
         let da = eraseAttr ()
 
+        // tmux commonly advances its full-screen client with CSI Ps S rather
+        // than line feeds. The alternate buffer deliberately has local
+        // history in this fork, so retain those rows just like natural
+        // full-screen scroll() does. Do the insertion as one batch: calling
+        // scroll() once per row would notify the host's scroll view in the
+        // middle of a single parser dispatch and make fast output visibly
+        // stutter.
+        //
+        // Keep every other SU case on the original in-place implementation.
+        // Primary-buffer CSI S, partial vertical regions, and DECLRMM all have
+        // established deletion/copy semantics that must not start producing
+        // scrollback as a side effect.
+        if buffer === altBuffer,
+           buffer.lines.maxLength > rows,
+           !marginMode,
+           buffer.scrollTop == 0,
+           buffer.scrollBottom == rows - 1 {
+            scrollFullScreenAlternateBufferUp(lines: p, eraseAttribute: da)
+            return
+        }
+
         if marginMode {
             let row = buffer.scrollTop + buffer.yBase
 
@@ -4858,6 +4879,57 @@ open class Terminal {
         }
         // this.maxRange();
         updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
+    }
+
+    /// Batched equivalent of `scroll()` for a full-screen alternate-buffer
+    /// CSI SU. Appending blank rows after the live viewport leaves the rows
+    /// that moved off its top in the circular history and advances `yBase` by
+    /// only the number of rows that fit before capacity trimming begins.
+    private func scrollFullScreenAlternateBufferUp(lines lineCount: Int, eraseAttribute: Attribute)
+    {
+        let buffer = self.buffer
+        let lines = buffer.lines
+        let preCount = lines.count
+        let preYBase = buffer.yBase
+        let preYDisp = buffer.yDisp
+        let insertAt = preYBase + rows
+        let hadAnyImages = buffer.hasAnyImages
+        let blankLines = (0..<lineCount).map { _ in
+            buffer.getBlankLine(attribute: eraseAttribute)
+        }
+
+        lines.splice(
+            start: insertAt,
+            deleteCount: 0,
+            items: blankLines,
+            change: { _ in }
+        )
+
+        let countAdded = max(0, lines.count - preCount)
+        let countTrimmed = max(0, lineCount - countAdded)
+        buffer.yBase = preYBase + countAdded
+        if buffer.hasScrollback {
+            buffer.linesTop += countTrimmed
+        }
+        if userScrolling {
+            buffer.yDisp = max(0, preYDisp - countTrimmed)
+        } else {
+            buffer.yDisp = buffer.yBase
+        }
+
+        updateRange(startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
+        if hadAnyImages {
+            // CircularList.splice intentionally bypasses push/recycle
+            // callbacks, so a capacity trim can otherwise leave the buffer's
+            // fast image-count flag stale after an imaged row falls off.
+            buffer.recalculateLinesWithImagesCount()
+            if buffer.hasAnyImages {
+                updateKittyRelativePlacementsForCurrentBuffer()
+            }
+        }
+
+        // One CSI dispatch, one viewport notification, regardless of Ps.
+        tdel?.scrolled(source: self, yDisp: buffer.yDisp)
     }
 
     //

@@ -113,14 +113,6 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
-    /// Output received shortly after local input is likely echo or a prompt
-    /// redraw. Track the input time so that response can bypass the normal
-    /// frame-coalescing delay.
-    var lastUserInputUptimeNs: UInt64 = 0
-    let interactiveInputDisplayWindowNs: UInt64 = 150_000_000
-    let interactiveInputDisplayLock = NSLock()
-    var interactiveInputGeneration: UInt64 = 0
-    var displayedInteractiveInputGeneration: UInt64 = 0
 #if canImport(MetalKit)
     var metalView: MTKView?
     var metalRenderer: MetalTerminalRenderer?

@@ -220,14 +220,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var search: SearchService!
     var debug: UIView?
     var pendingDisplay: Bool = false
-    /// Output received shortly after local input is likely echo or a prompt
-    /// redraw. Track the input time so that response can bypass the normal
-    /// frame-coalescing delay.
-    var lastUserInputUptimeNs: UInt64 = 0
-    let interactiveInputDisplayWindowNs: UInt64 = 150_000_000
-    let interactiveInputDisplayLock = NSLock()
-    var interactiveInputGeneration: UInt64 = 0
-    var displayedInteractiveInputGeneration: UInt64 = 0
 #if canImport(MetalKit)
     var metalView: MTKView?
     var metalRenderer: MetalTerminalRenderer?
@@ -438,7 +430,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             mtkView.framebufferOnly = true
             mtkView.colorPixelFormat = .bgra8Unorm
             mtkView.isUserInteractionEnabled = false
-            mtkView.preferredFramesPerSecond = 120
             let renderer = try MetalTerminalRenderer(view: mtkView, terminalView: self)
             mtkView.delegate = renderer
             if let caretView = caretView {
@@ -468,16 +459,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func setupDisplayUpdates ()
     {
         link = CADisplayLink(target: self, selector: #selector(step))
-        if #available(iOS 15.0, visionOS 1.0, *) {
-            link.preferredFrameRateRange = CAFrameRateRange(
-                minimum: 60,
-                maximum: 120,
-                preferred: 120
-            )
-        }
-        // Keep terminal frames flowing while UIKit switches the run loop into
-        // tracking mode for touches and scroll gestures.
-        link.add(to: .current, forMode: .common)
+        link.add(to: .current, forMode: .default)
         suspendDisplayUpdates()
     }
 
@@ -546,9 +528,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     @objc
     func step(displaylink: CADisplayLink) {
         updateDisplay()
-        if !pendingDisplay {
-            link.isPaused = true
-        }
     }
 
     func startDisplayUpdates()
@@ -1281,10 +1260,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         setupOptions(width: bounds.width, height: bounds.height)
         layer.backgroundColor = nativeBackgroundColor.cgColor
         nativeBackgroundColor = UIColor.clear
-        // Glyph cells use a transparent backdrop over the layer color. An
-        // opaque UIScrollView has no alpha channel, which can expose stale
-        // backing-store pixels when scrollback blits and reveals new strips.
-        isOpaque = false
+        // The terminal fills every pixel with its layer background. Keeping
+        // the surface opaque avoids an expensive full-screen blend on every
+        // CoreGraphics redraw (Pling does not enable SwiftTerm's Metal path).
+        isOpaque = true
     }
     
     var _nativeFg, _nativeBg: TTColor!
@@ -1495,12 +1474,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let newSize = CGSize (width: CGFloat (displayBuffer.cols) * cellDimension.width,
                               height: CGFloat (displayBuffer.lines.count) * cellDimension.height)
         let sizeChanged = contentSize != newSize
-        // Disable implicit animations so the scroll position snaps instantly
-        // instead of visibly sliding (e.g., during tmux tab switch redraws).
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        defer { CATransaction.commit() }
-        if sizeChanged  { contentSize = newSize }
 
         // While the finger owns the scroll view, and while a frozen viewport
         // is coasting under momentum, do not fight UIKit's contentOffset.
@@ -1508,13 +1481,32 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         // reachable. If the view is following the tail, keep pinning it during
         // deceleration so streaming output cannot pull the bottom away.
         if isTracking || (userScrolling && isDecelerating) {
+            guard sizeChanged else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            contentSize = newSize
+            CATransaction.commit()
             return
         }
 
         let rowOffset = CGFloat(displayBuffer.yDisp) * cellDimension.height
         let desiredY = userScrolling ? rowOffset + manualScrollOffsetWithinRow : rowOffset
-        let newOffset = CGPoint(x: 0, y: min(desiredY, maxContentOffsetY()))
-        setContentOffsetFromTerminal(newOffset)
+        let projectedMaxOffset = max(
+            0,
+            newSize.height - bounds.height + adjustedContentInset.bottom
+        )
+        let newOffset = CGPoint(x: 0, y: min(desiredY, projectedMaxOffset))
+        let offsetChanged = abs(contentOffset.x - newOffset.x) > contentOffsetTolerance
+            || abs(contentOffset.y - newOffset.y) > contentOffsetTolerance
+        guard sizeChanged || offsetChanged else { return }
+
+        // Disable implicit animations so the scroll position snaps instantly
+        // instead of visibly sliding (e.g., during tmux tab switch redraws).
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if sizeChanged { contentSize = newSize }
+        if offsetChanged { setContentOffsetFromTerminal(newOffset) }
+        CATransaction.commit()
     }
 
 #if canImport(MetalKit)

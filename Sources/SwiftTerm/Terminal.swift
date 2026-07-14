@@ -5494,6 +5494,33 @@ open class Terminal {
     }
     
     /**
+     * Returns the logical (unwrapped) line of text containing the cursor,
+     * concatenating wrapped continuation rows. Hosts use this to inspect the
+     * command line the user just submitted — reconstructing it from the
+     * echoed byte stream is unreliable because line editors repaint wrapped
+     * rows with carriage returns and erase sequences.
+     */
+    public func getCursorLogicalLine () -> String
+    {
+        let buffer = self.buffer
+        var start = buffer.y + buffer.yBase
+        guard start >= 0, start < buffer.lines.count else { return "" }
+        while start > 0, buffer.lines[start].isWrapped {
+            start -= 1
+        }
+        var text = ""
+        var row = start
+        while row < buffer.lines.count {
+            if row != start, !buffer.lines[row].isWrapped {
+                break
+            }
+            text += buffer.lines[row].translateToString(trimRight: true)
+            row += 1
+        }
+        return text
+    }
+
+    /**
      * Returns the starting and ending lines that need to be redrawn, or nil
      * if no part of the screen needs to be updated.   Alternatively, you can
      * get a Set<Int> with the changed lines by calling `changedLines()`.

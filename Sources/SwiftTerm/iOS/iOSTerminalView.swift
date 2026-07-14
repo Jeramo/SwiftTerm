@@ -1602,10 +1602,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         let atBottomThreshold = max(contentOffsetTolerance, cellDimension.height / 2)
 
         if offsetY >= maxOffset - atBottomThreshold {
-            if displayBuffer.yDisp != maxRow {
-                terminal.setViewYDisp(maxRow)
+            // Only a physical drag (or its momentum) landing at the bottom may
+            // release the manual-scroll freeze. Keyboard-inset and layout-driven
+            // offset writes also land here while the user is browsing history;
+            // letting them disengage userScrolling makes the next output line
+            // snap the viewport to the bottom out from under the user.
+            if isTracking || isDecelerating || !userScrolling {
+                if displayBuffer.yDisp != maxRow {
+                    terminal.setViewYDisp(maxRow)
+                }
+                setManualScrolling(false)
             }
-            setManualScrolling(false)
             return
         }
 

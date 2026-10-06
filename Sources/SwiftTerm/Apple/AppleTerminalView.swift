@@ -845,7 +845,7 @@ extension TerminalView {
     // "k=v:k2=v2;URL"
     func urlAndParamsFrom(payload: String) -> (String, [String:String])?
     {
-        let split = payload.split(separator: ";", maxSplits: Int.max, omittingEmptySubsequences: false)
+        let split = payload.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
         if split.count > 1 {
             let pairs = split[0].split(separator: ":")
             var params: [String:String] = [:]
@@ -915,12 +915,12 @@ extension TerminalView {
         }
     }
 
-    func linkForClick(at position: Position, hasCommandModifier: Bool) -> (link: String, params: [String:String])?
+    func linkForClick(at position: Position, hasCommandModifier: Bool, requireHighlight: Bool = true, mode: Terminal.LinkLookupMode = .explicitAndImplicit) -> (link: String, params: [String:String])?
     {
-        guard let match = terminal.linkMatch(at: .buffer(position), mode: .explicitAndImplicit) else {
+        guard let match = terminal.linkMatch(at: .buffer(position), mode: mode) else {
             return nil
         }
-        guard linkVisibleForClick(match: match, hasCommandModifier: hasCommandModifier) else {
+        guard !requireHighlight || linkVisibleForClick(match: match, hasCommandModifier: hasCommandModifier) else {
             return nil
         }
         if match.isExplicit,

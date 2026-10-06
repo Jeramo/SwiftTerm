@@ -171,11 +171,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
      */
     public var allowMouseReporting: Bool = true
 
-    /// Controls how link tracking resolves hovered links:
+    /// Controls how link tracking resolves hovered and tapped links:
     /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
     public var linkReporting: LinkReporting = .implicit
 
-    /// Controls link highlighting and link activation behavior.
+    /// Controls link highlighting. Taps activate detected links without requiring hover.
     public var linkHighlightMode: LinkHighlightMode = .hover {
         didSet {
             linkHighlightRange = nil
@@ -773,19 +773,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     @objc func singleTap (_ gestureRecognizer: UITapGestureRecognizer)
     {
+        guard gestureRecognizer.view != nil, gestureRecognizer.state == .ended else { return }
+
+        // Touch has no hover phase. Resolve links before keyboard focus and
+        // mouse reporting so tmux/Zellij cannot consume a link tap.
+        let tapHit = calculateTapHit(gesture: gestureRecognizer).grid
+        let linkMode: Terminal.LinkLookupMode = linkReporting == .explicit ? .explicitOnly : .explicitAndImplicit
+        if linkReporting != .none,
+           let result = linkForClick(at: tapHit, hasCommandModifier: commandActive, requireHighlight: false, mode: linkMode) {
+            openLink(result.link, params: result.params)
+            return
+        }
+
         if isFirstResponder {
-            guard gestureRecognizer.view != nil else { return }
-                 
-            if gestureRecognizer.state != .ended {
-                return
-            }
-
-            let tapHit = calculateTapHit(gesture: gestureRecognizer).grid
-            if let result = linkForClick(at: tapHit, hasCommandModifier: commandActive) {
-                terminalDelegate?.requestOpenLink(source: self, link: result.link, params: result.params)
-                return
-            }
-
             if allowMouseReporting && terminal.mouseMode.sendButtonPress() {
                 sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
 
@@ -815,6 +815,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
     
+    /// Opens an activated link. Subclasses can handle links in read-only views
+    /// that have no terminal connection delegate.
+    open func openLink(_ link: String, params: [String: String])
+    {
+        terminalDelegate?.requestOpenLink(source: self, link: link, params: params)
+    }
+
     @objc func doubleTap (_ gestureRecognizer: UITapGestureRecognizer)
     {
         guard gestureRecognizer.view != nil else { return }

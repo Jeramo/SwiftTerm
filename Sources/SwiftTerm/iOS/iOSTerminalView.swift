@@ -602,7 +602,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     @objc
-    public override func canPerformAction(
+    open override func canPerformAction(
         _ action: Selector,
         withSender sender: Any?
     ) -> Bool {

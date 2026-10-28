@@ -1,0 +1,14 @@
+SIZE 20 6
+CURSOR 5 3
+T0 abcdefghijklmnopqr✋
+T1 🏽|
+T2 abcdefghijklmnopqrs
+T3 ✋🏽|
+T4 
+T5 
+C0 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 20
+C1 0 2 3
+C2 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19
+C3 0 2 4 5
+C4 0
+C5 0

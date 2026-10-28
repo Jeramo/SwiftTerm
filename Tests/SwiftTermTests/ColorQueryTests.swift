@@ -43,9 +43,10 @@ final class ColorQueryTests {
         terminal.feed(text: "\u{1b}]10;?\u{07}")
         terminal.feed(text: "\u{1b}]11;?\u{07}")
 
+        // BEL-terminated queries get BEL-terminated replies, as in xterm
         #expect(delegate.sent.count == 2)
-        #expect(delegate.sent[0] == bytes("\u{1b}]10;rgb:1111/2222/3333\u{1b}\\"))
-        #expect(delegate.sent[1] == bytes("\u{1b}]11;rgb:4444/5555/6666\u{1b}\\"))
+        #expect(delegate.sent[0] == bytes("\u{1b}]10;rgb:1111/2222/3333\u{07}"))
+        #expect(delegate.sent[1] == bytes("\u{1b}]11;rgb:4444/5555/6666\u{07}"))
     }
 
     @Test func testOsc104EmptyResetsAllColors() {

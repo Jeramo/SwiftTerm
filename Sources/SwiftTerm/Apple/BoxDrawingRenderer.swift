@@ -627,7 +627,7 @@ private func fillArcQuarter(corner: Corner,
 }
 
 struct BoxDrawingRenderItem {
-    let column: Int
+    var column: Int
     let columnWidth: Int
     let codePoint: UInt32
     let foregroundColor: TTColor

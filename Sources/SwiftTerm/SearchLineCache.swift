@@ -7,7 +7,10 @@
 
 import Foundation
 
-typealias LineCacheEntry = (lineAsString: String, lineOffsets: [Int])
+/// A logical (possibly wrapped) line as text, the Character offset where each of
+/// its rows starts, and the column where each Character starts, counted from the
+/// first row, plus the column after the end
+typealias LineCacheEntry = (lineAsString: String, lineOffsets: [Int], columns: [Int])
 
 final class SearchLineCache {
     private enum Constants {
@@ -60,46 +63,64 @@ final class SearchLineCache {
 
     func translateBufferLineToStringWithWrap (lineIndex: Int, trimRight: Bool) -> LineCacheEntry {
         let buffer = terminal.displayBuffer
-        var strings: [String] = []
+        let cols = terminal.cols
+        var text = ""
+        var columns: [Int] = []
         var lineOffsets: [Int] = [0]
+        var endColumn = 0
         var idx = lineIndex
+        var rowStart = 0
 
         while idx >= 0 && idx < buffer.lines.count {
             let line = buffer.lines[idx]
             let nextLine = (idx + 1) < buffer.lines.count ? buffer.lines[idx + 1] : nil
             let lineWrapsToNext = nextLine?.isWrapped ?? false
 
-            var string = buffer.translateBufferLineToString(
-                lineIndex: idx,
-                trimRight: !lineWrapsToNext && trimRight,
-                startCol: 0,
-                endCol: -1,
-                skipNullCellsFollowingWide: true,
-                characterProvider: { self.terminal.getCharacter(for: $0) }
-            ).replacingOccurrences(of: "\u{0}", with: " ")
-
-            if lineWrapsToNext, let nextLine {
-                let lastIndex = max(line.count - 1, 0)
-                let lastCell = line[lastIndex]
-                let lastCellIsNull = lastCell.code == 0 && lastCell.width <= 1
-                if lastCellIsNull && nextLine.getWidth(index: 0) == 2 {
-                    if !string.isEmpty {
-                        string.removeLast()
-                    }
+            var end = min(line.count, cols)
+            if !lineWrapsToNext && trimRight {
+                end = min(end, line.getTrimmedLength())
+            }
+            // A wide character that did not fit leaves a blank before it wraps
+            if lineWrapsToNext, let nextLine, end > 0 {
+                let lastCell = line[end - 1]
+                if lastCell.code == 0 && lastCell.width <= 1 && nextLine.getWidth(index: 0) == 2 {
+                    end -= 1
                 }
             }
+            for col in 0..<end {
+                let cell = line[col]
+                if cell.width == 0 {
+                    // the trailing half of a wide character
+                    continue
+                }
+                let cellText = cell.code == 0 ? " " : terminal.getText(for: cell)
+                // A skin tone or mark can merge with the Character before it ("a" + "🏽"),
+                // which then spans both cells
+                let merges = !text.isEmpty && (String(text.last!) + String(cellText.first!)).count == 1
+                text += cellText
+                for _ in 0..<max(cellText.count - (merges ? 1 : 0), 0) {
+                    columns.append(rowStart + col)
+                }
+            }
+            endColumn = rowStart + end
 
-            strings.append(string)
-
-            if lineWrapsToNext {
-                lineOffsets.append(lineOffsets[lineOffsets.count - 1] + string.count)
-            } else {
+            if !lineWrapsToNext {
                 break
             }
-
+            lineOffsets.append(columns.count)
             idx += 1
+            rowStart += cols
         }
 
-        return (strings.joined(), lineOffsets)
+        // Keep one column per Character even if segmentation moved across cells
+        let count = text.count
+        if columns.count > count {
+            columns.removeLast(columns.count - count)
+        }
+        while columns.count < count {
+            columns.append(columns.last ?? 0)
+        }
+        columns.append(endColumn)
+        return (text, lineOffsets, columns)
     }
 }

@@ -424,6 +424,10 @@ open class Terminal {
     private var curAttr: Attribute = CharData.defaultAttr
     private var charToIndexMap: [Character:Int32] = [:]
     private var indexToCharMap: [Int32: Character] = [:]
+    // Cells holding more than one grapheme cluster: tmux joins whatever
+    // follows a ZWJ ("ප්‍ර", "👩‍中") into one cell
+    private var textToIndexMap: [String:Int32] = [:]
+    private var indexToTextMap: [Int32: String] = [:]
     private var lastCharIndex: Int32 = Int32(CharData.maxRune + 1)
     var gLevel: UInt8 = 0
     var cursorBlink: Bool = false
@@ -541,7 +545,27 @@ open class Terminal {
             if options.ansi256PaletteStrategy == .base16Lab {
                 rebuildAnsiPalette(notifyDelegate: true)
             }
+            // Only the host's theme changes are announced, not an OSC 11 the
+            // application sent itself
+            if colorSchemeUpdates && !isParsing && oldValue.isLight != backgroundColor.isLight {
+                sendColorSchemeReport ()
+            }
         }
+    }
+
+    /// Set by DECSET 2031: the application wants `CSI ? 997 ; Ps n` whenever
+    /// the background switches between dark and light.
+    var colorSchemeUpdates = false
+
+    /// True while `parse` runs, to tell the application's own changes from the host's
+    var isParsing = false
+
+    /// Reports whether the background is dark (1) or light (2), the answer to
+    /// `CSI ? 996 n` and the DECSET 2031 notification.
+    func sendColorSchemeReport ()
+    {
+        let background = tdel?.getColors(source: self).background ?? backgroundColor
+        sendResponse (cc.CSI, "?997;\(background.isLight ? 2 : 1)n")
     }
 
     /// Strategy used to derive the extended 256-color palette (indices 16...255).
@@ -782,7 +806,9 @@ open class Terminal {
     /// Returns the character at the specified column and row, these are zero-based
     /// - Parameter col: column to retrieve, starts at 0
     /// - Parameter row: row to retrieve, starts at 0
-    /// - Returns: nil if the col or row are out of bounds, or the Character contained in that cell otherwise
+    /// - Returns: nil if the col or row are out of bounds, or the Character contained in that cell otherwise.
+    ///   Under `WidthMode.tmux` a cell can hold more than one character (tmux joins what follows
+    ///   a ZWJ); this returns the first, and `getText(for:)` returns all of them.
     
     public func getCharacter (col: Int, row: Int) -> Character?
     {
@@ -874,6 +900,7 @@ open class Terminal {
         setInsertMode(false)
         setWraparound(true)
         bracketedPasteMode = false
+        colorSchemeUpdates = false
 
         keyboardModeNormal = KeyboardModeState()
         keyboardModeAlt = KeyboardModeState()
@@ -1032,8 +1059,15 @@ open class Terminal {
             case "s": // DECSLRM - the current left and right margins
                 result = "\(terminal.buffer.marginLeft+1);\(terminal.buffer.marginRight+1)s"
             case " q": // DECSCUSR - the set cursor style
-                // TODO this should send a number for the current cursor style 2 for block, 4 for underline and 6 for bar
-                let style = "2" // block
+                let style: Int
+                switch terminal.options.cursorStyle {
+                case .blinkBlock: style = 1
+                case .steadyBlock: style = 2
+                case .blinkUnderline: style = 3
+                case .steadyUnderline: style = 4
+                case .blinkBar: style = 5
+                case .steadyBar: style = 6
+                }
                 result = "\(style) q"
             default:
                 ok = 0 // this means the request is not valid, report that to the host.
@@ -1045,6 +1079,140 @@ open class Terminal {
 
             }
             terminal.sendResponse (terminal.cc.DCS, "\(ok)$r\(result)", terminal.cc.ST)
+        }
+    }
+
+    // DCS + q Pt ST
+    // XTGETTCAP - request terminfo capabilities (xterm)
+    //   Pt is a list of hex-encoded capability names separated by ';'.  Each
+    //   known name gets its own reply, as kitty and Ghostty do (neovim parses
+    //   one capability per reply); unknown or malformed names get none, as
+    //   in Ghostty.  Values are what tigetstr(3) would return, so escapes are
+    //   real bytes: neovim only enables its OSC 52 clipboard when Ms starts
+    //   with ESC ] 52.
+    // Response: DCS 1 + r Pn [= Pv] ST, Pn and Pv hex-encoded
+    class XTGETTCAP : DcsHandler {
+        // Long enough for every capability we know, short enough to bound memory;
+        // a longer request is dropped rather than answered from a prefix
+        static let maximumRequestBytes = 4096
+
+        var data: [UInt8]
+        var overflowed = false
+        unowned var terminal: Terminal
+
+        public init (terminal: Terminal)
+        {
+            self.terminal = terminal
+            data = []
+        }
+
+        func hook (collect: cstring, parameters: [Int],  flag: UInt8)
+        {
+            data = []
+            overflowed = false
+        }
+
+        func put (data : ArraySlice<UInt8>)
+        {
+            if self.data.count + data.count <= XTGETTCAP.maximumRequestBytes {
+                self.data.append (contentsOf: data)
+            } else {
+                overflowed = true
+            }
+        }
+
+        func unhook ()
+        {
+            if overflowed {
+                return
+            }
+            for token in data.split (separator: UInt8 (ascii: ";"), omittingEmptySubsequences: false) {
+                guard let name = XTGETTCAP.decodeHex (token), let value = capability (name) else {
+                    continue
+                }
+                var reply = "1+r" + XTGETTCAP.encodeHex (Array (name.utf8))
+                if let value {
+                    reply += "=" + XTGETTCAP.encodeHex (Array (value.utf8))
+                }
+                terminal.sendResponse (terminal.cc.DCS, reply, terminal.cc.ST)
+            }
+        }
+
+        /// The value of a capability: nil when unknown, .some(nil) for a boolean
+        func capability (_ name: String) -> String?? {
+            switch name {
+            case "TN":
+                return .some (terminal.options.termName)
+            case "Co", "colors":
+                return .some ("256")
+            case "RGB":
+                return .some ("8")
+            default:
+                if XTGETTCAP.booleans.contains (name) {
+                    return .some (nil)
+                }
+                if let value = XTGETTCAP.strings [name] {
+                    return .some (value)
+                }
+                return nil
+            }
+        }
+
+        static let booleans: Set<String> = ["Tc", "Su"]
+
+        static let strings: [String: String] = [
+            "setrgbf": "\u{1b}[38:2:%p1%d:%p2%d:%p3%dm",
+            "setrgbb": "\u{1b}[48:2:%p1%d:%p2%d:%p3%dm",
+            "Smulx": "\u{1b}[4:%p1%dm",
+            "Setulc": "\u{1b}[58:2::%p1%{65536}%/%d:%p1%{256}%/%{255}%&%d:%p1%{255}%&%d%;m",
+            "Ss": "\u{1b}[%p1%d q",
+            "Se": "\u{1b}[2 q",
+            "Cs": "\u{1b}]12;%p1%s\u{07}",
+            "Cr": "\u{1b}]112\u{07}",
+            "Ms": "\u{1b}]52;%p1%s;%p2%s\u{07}",
+            "Sync": "\u{1b}[?2026%?%p1%{1}%-%tl%eh%;",
+            "smxx": "\u{1b}[9m",
+            "rmxx": "\u{1b}[29m",
+            "sitm": "\u{1b}[3m",
+            "ritm": "\u{1b}[23m",
+            "BE": "\u{1b}[?2004h",
+            "BD": "\u{1b}[?2004l",
+            "PS": "\u{1b}[200~",
+            "PE": "\u{1b}[201~",
+            "fe": "\u{1b}[?1004h",
+            "fd": "\u{1b}[?1004l",
+            "kxIN": "\u{1b}[I",
+            "kxOUT": "\u{1b}[O",
+            "E3": "\u{1b}[3J",
+        ]
+
+        static func decodeHex (_ token: ArraySlice<UInt8>) -> String? {
+            guard !token.isEmpty, token.count % 2 == 0 else {
+                return nil
+            }
+            var bytes: [UInt8] = []
+            var i = token.startIndex
+            while i < token.endIndex {
+                guard let hi = hexValue (token [i]), let lo = hexValue (token [i+1]) else {
+                    return nil
+                }
+                bytes.append (hi << 4 | lo)
+                i += 2
+            }
+            return String (bytes: bytes, encoding: .ascii)
+        }
+
+        static func hexValue (_ c: UInt8) -> UInt8? {
+            switch c {
+            case UInt8 (ascii: "0")...UInt8 (ascii: "9"): return c - UInt8 (ascii: "0")
+            case UInt8 (ascii: "a")...UInt8 (ascii: "f"): return c - UInt8 (ascii: "a") + 10
+            case UInt8 (ascii: "A")...UInt8 (ascii: "F"): return c - UInt8 (ascii: "A") + 10
+            default: return nil
+            }
+        }
+
+        static func encodeHex (_ bytes: [UInt8]) -> String {
+            return bytes.map { String (format: "%02X", $0) }.joined ()
         }
     }
 
@@ -1197,6 +1365,319 @@ open class Terminal {
     // TODO: was this unused
     var lastBufferCol: Int = 0
     
+    /// The width rules for new output: how many columns a character takes and
+    /// which characters join the cell before them. They must match the program
+    /// positioning the cursor, or the rest of its line lands in the wrong
+    /// columns: `.unicode` (the default) for programs talking to the terminal
+    /// directly, `.wcwidth` with the server's table under mosh or zellij, and
+    /// `.tmux` with the server's version while attached to tmux. Changing it
+    /// does not touch what is already on the screen, and it costs nothing to
+    /// switch. A program can switch between `.unicode` and `.wcwidth` with
+    /// DECSET/DECRST 2027 (grapheme clustering), except while it is `.tmux`;
+    /// a full reset (RIS) undoes that and returns to the mode set here.
+    public var widthMode: WidthMode {
+        get {
+            effectiveWidthMode
+        }
+        set {
+            configuredWidthMode = newValue
+            effectiveWidthMode = newValue
+        }
+    }
+
+    /// The mode the host set through `widthMode`, which RIS returns to
+    var configuredWidthMode = WidthMode.unicode
+
+    /// The mode in force: `configuredWidthMode`, or what DECSET/DECRST 2027 chose since
+    var effectiveWidthMode = WidthMode.unicode {
+        didSet {
+            widthRules = WidthRules (effectiveWidthMode)
+            if case .wcwidth (let table) = effectiveWidthMode {
+                wcwidthTable = table
+            }
+        }
+    }
+
+    /// BDSM (ANSI mode 8): set, the default, draws right-to-left text in
+    /// visual order; reset, the application has ordered it and every cell is
+    /// drawn where it is
+    public private(set) var implicitBidi = true
+
+    /// The table DECRST 2027 measures with: the last one the mode used
+    var wcwidthTable = WcwidthTable.glibc
+
+    var widthRules = WidthRules (.unicode)
+
+    enum CombineResult {
+        /// joined the cell before the cursor
+        case joined
+        /// a zero-width character with nothing to join
+        case dropped
+        /// printed in a cell of its own
+        case separate
+    }
+
+    /// Returns the cursor's line, the column of the cell left of the cursor and
+    /// that cell, stepping over the trailing half of a wide character. A pending
+    /// wrap leaves the cursor past the last column, so the last column is the
+    /// cell left of it. Returns nil at column 0, and when `aligned` (tmux's
+    /// rule) also when the cursor sits on the trailing half of a wide character
+    /// rather than after it.
+    @inline(__always)
+    func cellLeftOfCursor (_ buffer: Buffer, aligned: Bool) -> (line: BufferLine, x: Int, cell: CharData)?
+    {
+        guard buffer.x > 0 else {
+            return nil
+        }
+        let line = buffer.lines [buffer.y + buffer.yBase]
+        let end = min (buffer.x, cols)
+        var x = end - 1
+        var cell = line [x]
+        if x > 0 && cell.width == 0 {
+            x -= 1
+            cell = line [x]
+        }
+        if aligned {
+            guard cell.width > 0 && x + Int (cell.width) == end else {
+                return nil
+            }
+        }
+        return (line, x, cell)
+    }
+
+    /// Decides whether `ch`, `width` columns wide on its own, joins the cell
+    /// before the cursor. The cell is the one left of the cursor (as in xterm,
+    /// Ghostty and tmux), not wherever the last character was printed: tmux
+    /// redraws a growing cluster in place by moving the cursor back and
+    /// printing the longer cluster.
+    @inline(__always)
+    func combine (_ ch: Character, scalar: UnicodeScalar, width: Int, buffer: Buffer) -> CombineResult
+    {
+        switch widthRules.combine {
+        case .unicode:
+            return combineUnicode (ch, scalar: scalar, width: width, buffer: buffer)
+        case .wcwidth:
+            // Only zero-width code points join; everything else takes its own cell
+            guard width == 0 else {
+                return .separate
+            }
+            guard let target = cellLeftOfCursor (buffer, aligned: false), target.cell.code != 0 else {
+                return .dropped
+            }
+            join (target, getText (for: target.cell), ch, width: nil, buffer: buffer)
+            return .joined
+        case .tmux34, .tmux36:
+            return combineTmux (ch, scalar: scalar, width: width, buffer: buffer)
+        }
+    }
+
+    /// Ghostty's rules: combining marks, ZWJ and variation selectors join the
+    /// cell before them; a skin tone joins an emoji modifier base; an emoji
+    /// joins a cluster ending in ZWJ; two regional indicators pair into a flag.
+    /// A spacing mark (कि) or a consonant joining a conjunct (क्ष) joins too,
+    /// and as it takes room of its own, makes a narrow cell two columns wide.
+    private func combineUnicode (_ ch: Character, scalar: UnicodeScalar, width: Int, buffer: Buffer) -> CombineResult
+    {
+        // Value checks come before the property lookups: they decide most characters
+        let value = scalar.value
+        if width == 1 && value >= 0x0900 && value <= 0x1D172 {
+            if UnicodeUtil.isSpacingMark (scalar) {
+                // Alone, it keeps the column it was measured with
+                guard let target = cellLeftOfCursor (buffer, aligned: false), target.cell.code != 0 else {
+                    return .separate
+                }
+                join (target, getText (for: target.cell), ch, width: target.cell.width == 1 ? 2 : nil, buffer: buffer)
+                return .joined
+            }
+            if value <= 0x0D7F, let target = cellLeftOfCursor (buffer, aligned: false), target.cell.code > Int32 (CharData.maxRune) {
+                // A conjunct: a consonant after a virama (and ZWJ) in the scripts
+                // Unicode joins that way (Devanagari, Bengali, Gujarati, Oriya,
+                // Telugu, Malayalam)
+                let previous = getText (for: target.cell)
+                if let last = previous.unicodeScalars.last (where: { $0.value != 0x200D }),
+                   [0x094D, 0x09CD, 0x0ACD, 0x0B4D, 0x0C4D, 0x0D4D].contains (last.value),
+                   (previous + String (ch)).count == 1 {
+                    join (target, previous, ch, width: target.cell.width == 1 ? 2 : nil, buffer: buffer)
+                    return .joined
+                }
+            }
+        }
+        let isModifier = value >= 0x1F3FB && value <= 0x1F3FF  // skin tones
+        let zeroWidth = width == 0 || value == 0x200D ||
+                        scalar.properties.canonicalCombiningClass != .notReordered ||
+                        scalar.properties.isVariationSelector
+        if zeroWidth {
+            // Ghostty ignores a zero-width character with no text before it
+            guard let target = cellLeftOfCursor (buffer, aligned: false), target.cell.code != 0 else {
+                return .dropped
+            }
+            let previous = getText (for: target.cell)
+            var newWidth: Int? = nil
+            if (value == 0xFE0F || value == 0xFE0E), let base = previous.unicodeScalars.last,
+               UnicodeUtil.isEmojiVs16Base (rune: base) {
+                // VS16 makes an emoji wide, VS15 narrow
+                newWidth = value == 0xFE0F ? 2 : 1
+            }
+            join (target, previous, ch, width: newWidth, buffer: buffer)
+            return .joined
+        }
+        if isModifier {
+            // "a🏽" and "中🏽" are a letter and a swatch; "👍🏽" is one emoji
+            if let target = cellLeftOfCursor (buffer, aligned: false), target.cell.code != 0 {
+                let previous = getText (for: target.cell)
+                if let base = previous.unicodeScalars.last, base.properties.isEmojiModifierBase {
+                    join (target, previous, ch, width: nil, buffer: buffer)
+                    return .joined
+                }
+            }
+            return .separate
+        }
+        // Only cells stored by index (clusters, characters outside the BMP) can end
+        // in ZWJ or hold a regional indicator, so plain text skips the lookup
+        guard let target = cellLeftOfCursor (buffer, aligned: false),
+              target.cell.code > Int32 (CharData.maxRune) else {
+            return .separate
+        }
+        let previous = getText (for: target.cell)
+        let scalars = previous.unicodeScalars
+        let joins: Bool
+        if scalars.last?.value == 0x200D {
+            // An emoji ZWJ sequence; Ghostty does not join conjuncts such as क्‍ष
+            joins = scalar.properties.isEmoji
+        } else if UnicodeUtil.isRegionalIndicator (scalar), scalars.count == 1, let first = scalars.first {
+            joins = UnicodeUtil.isRegionalIndicator (first)
+        } else {
+            joins = false
+        }
+        guard joins, (previous + String (ch)).count == 1 else {
+            return .separate
+        }
+        join (target, previous, ch, width: nil, buffer: buffer)
+        return .joined
+    }
+
+    /// tmux's screen_write_combine, for 3.4/3.5 and for 3.6+.
+    private func combineTmux (_ ch: Character, scalar: UnicodeScalar, width: Int, buffer: Buffer) -> CombineResult
+    {
+        let value = scalar.value
+        let tmux36 = widthRules.combine == .tmux36
+        if tmux36 && value == 0x3164 {
+            // tmux 3.6 ignores the Hangul filler entirely
+            return .dropped
+        }
+        let isVs16 = value == 0xFE0F
+        let zeroWidth = value == 0x200D || isVs16 || width == 0
+        guard let target = cellLeftOfCursor (buffer, aligned: true) else {
+            return zeroWidth ? .dropped : .separate
+        }
+        // To tmux an empty cell is a space
+        let previous = target.cell.code == 0 ? " " : getText (for: target.cell)
+        var forceWide = isVs16 && widthRules.vs16Widens
+        if !zeroWidth {
+            let first = previous.unicodeScalars.first!
+            let isTone = value >= 0x1F3FB && value <= 0x1F3FF
+            if tmux36 {
+                if let jamo = Terminal.hangulJamoClass (value) {
+                    // Hangul jamo compose into the syllable before them, or are dropped
+                    switch jamo {
+                    case 0:
+                        return .separate
+                    default:
+                        guard let last = previous.unicodeScalars.last,
+                              Terminal.hangulJamoClass (last.value) == jamo - 1 else {
+                            return .dropped
+                        }
+                    }
+                } else if UnicodeUtil.isRegionalIndicator (scalar) && UnicodeUtil.isRegionalIndicator (first) {
+                    // A pair of regional indicators is a flag; a third starts a new cell
+                    guard previous.unicodeScalars.filter ({ UnicodeUtil.isRegionalIndicator ($0) }).count == 1 else {
+                        return .separate
+                    }
+                    forceWide = true
+                } else if isTone && Terminal.isTmuxModifierBase (first.value) {
+                    forceWide = true
+                } else if first.value >= 0x1F3FB && first.value <= 0x1F3FF && Terminal.isTmuxModifierBase (value) {
+                    // tmux also joins a base that follows a lone skin tone
+                    forceWide = true
+                } else if previous.unicodeScalars.last?.value != 0x200D {
+                    return .separate
+                }
+            } else {
+                if isTone || UnicodeUtil.isRegionalIndicator (scalar) {
+                    // Skin tones and regional indicators join any cell but an ASCII one
+                    guard previous.utf8.count >= 2 else {
+                        return .separate
+                    }
+                    forceWide = true
+                } else if previous.unicodeScalars.last?.value != 0x200D {
+                    return .separate
+                }
+            }
+        }
+        // A tmux cell holds at most 21 bytes (32 from 3.6); what does not fit starts a new cell
+        guard previous.utf8.count + String (ch).utf8.count <= widthRules.maxCellBytes else {
+            return zeroWidth ? .dropped : .separate
+        }
+        join (target, previous, ch, width: forceWide ? 2 : nil, buffer: buffer)
+        return .joined
+    }
+
+    /// 0 for a leading Hangul jamo (choseong), 1 for a vowel, 2 for a trailing
+    /// consonant, as tmux classifies them; nil for anything else
+    static func hangulJamoClass (_ value: UInt32) -> Int?
+    {
+        switch value {
+        case 0x1100...0x115F, 0xA960...0xA97C:
+            return 0
+        case 0x1160...0x11A7, 0xD7B0...0xD7C6:
+            return 1
+        case 0x11A8...0x11FF, 0xD7CB...0xD7FB:
+            return 2
+        default:
+            return nil
+        }
+    }
+
+    static func isTmuxModifierBase (_ value: UInt32) -> Bool
+    {
+        return UnicodeUtil.bisearch (rune: value, table: TmuxWidthData.modifierBases, max: TmuxWidthData.modifierBases.count - 1) != 0
+    }
+
+    /// Appends `ch` to the cell left of the cursor, which holds `previous`,
+    /// and resizes it to `width` columns when given: VS16 and tmux's forced
+    /// joins make a narrow cell wide, VS15 makes an emoji narrow. The text is
+    /// kept even when it is more than one grapheme cluster.
+    private func join (_ target: (line: BufferLine, x: Int, cell: CharData), _ previous: String, _ ch: Character, width: Int?, buffer: Buffer)
+    {
+        let line = target.line
+        let x = target.x
+        var cd = target.cell
+        let oldWidth = Int (cd.width)
+        var newWidth = width ?? oldWidth
+        if newWidth == 2 && oldWidth == 1 && x + 1 >= cols {
+            // no room to widen in the last column
+            newWidth = 1
+        }
+        cd.setValue (code: code (forText: previous + String (ch)), size: Int32 (newWidth))
+        let end = min (buffer.x, cols)
+        if newWidth == 2 && oldWidth == 1 {
+            // The cell taken over may be the leading half of a wide character,
+            // whose trailing half must not linger
+            line.cleanupWideCharHalves (at: x + 1, fillData: CharData (attribute: eraseAttr ()))
+            line [x + 1] = makeCharData (attribute: cd.attribute, code: 0, size: 0)
+            if end == x + 1 {
+                buffer.x = x + 2
+            }
+        } else if newWidth == 1 && oldWidth == 2 {
+            line [x + 1] = CharData (attribute: eraseAttr ())
+            if end == x + 2 {
+                buffer.x = x + 1
+            }
+        }
+        line [x] = cd
+        updateRange (borrowing: buffer, buffer.y)
+    }
+
     func handlePrint (_ data: ArraySlice<UInt8>)
     {
         let buffer = self.buffer
@@ -1282,7 +1763,7 @@ open class Terminal {
                 // Now the challenge is that we have a character, not a rune, and we want to compute
                 // the width of it.
                 if ch.unicodeScalars.count == 1 {
-                    chWidth = UnicodeUtil.columnWidth(rune: ch.unicodeScalars.first!)
+                    chWidth = UnicodeUtil.columnWidth(rune: ch.unicodeScalars.first!, rules: widthRules)
                 } else {
                     chWidth = 0
                     for scalar in ch.unicodeScalars {
@@ -1303,92 +1784,14 @@ open class Terminal {
                 continue
             }
 
+            // Whether this character joins the cell before it depends on whose
+            // rules the terminal follows (see widthMode)
             if let firstScalar = ch.unicodeScalars.first {
-                // Check if we should try to combine this character with the previous one.
-                // This applies to:
-                // 1. Unicode combining characters (diacritics, etc.)
-                // 2. Emoji skin tone modifiers (e.g., 🖐 + 🏾 = 🖐🏾)
-                // 3. Zero Width Joiner (ZWJ) for emoji sequences (e.g., 👩 + ZWJ + 👩 + ZWJ + 👦 = 👩‍👩‍👦)
-                // 4. Variation selectors (e.g., U+FE0F for emoji presentation of ❤️)
-                // 5. Any character following a ZWJ (to complete the sequence)
-                var shouldTryCombine = chWidth == 0 ||
-                                       firstScalar.properties.canonicalCombiningClass != .notReordered ||
-                                       firstScalar.properties.isEmojiModifier ||
-                                       firstScalar.properties.isVariationSelector ||
-                                       firstScalar.value == 0x200D  // ZWJ
-
-                // Also check if the previous character ends with ZWJ - if so, we should combine
-                if !shouldTryCombine {
-                    let last = buffer.lastBufferStorage
-                    if last.cols == cols && last.rows == rows {
-                        let existingLine = buffer.lines [last.y]
-                        let lastx = last.x >= cols ? cols-1 : last.x
-                        let lastChar = getCharacter (for: existingLine [lastx])
-                        if lastChar.unicodeScalars.last?.value == 0x200D {
-                            shouldTryCombine = true
-                        }
-                        // Regional indicator combining: pair two RIs into a flag emoji
-                        else if UnicodeUtil.isRegionalIndicator(firstScalar),
-                                lastChar.unicodeScalars.count == 1,
-                                let lastScalar = lastChar.unicodeScalars.first,
-                                UnicodeUtil.isRegionalIndicator(lastScalar) {
-                            shouldTryCombine = true
-                        }
-                    }
-                }
-
-                if shouldTryCombine {
-                    // Determine if the last time we poked at a character is still valid
-                    let last = buffer.lastBufferStorage
-                    if last.cols == cols && last.rows == rows {
-                        // Fetch the old character, and attempt to combine it:
-                        let existingLine = buffer.lines [last.y]
-                        let lastx = last.x >= cols ? cols-1 : last.x
-                        var cd = existingLine [lastx]
-
-                        // Attempt the combination
-                        let newStr = String ([getCharacter (for: cd), ch])
-
-                        // If the resulting string is 1 grapheme cluster, then it combined properly
-                        if newStr.count == 1 {
-                            if let newCh = newStr.first {
-                                let oldSize = cd.width
-                                let isVs16 = firstScalar.value == 0xFE0F
-                                let isVs15 = firstScalar.value == 0xFE0E
-                                let needsEmojiVariationCheck = isVs16 || isVs15
-                                if needsEmojiVariationCheck {
-                                    let baseScalar = getCharacter(for: cd).unicodeScalars.last
-                                    if baseScalar == nil || !UnicodeUtil.isEmojiVs16Base(rune: baseScalar!) {
-                                        continue
-                                    }
-                                }
-                                if isVs16 {
-                                    if oldSize != 2 && lastx + 1 < cols {
-                                        updateCharData(&cd, char: newCh, size: 2)
-                                        let nextX = lastx + 1
-                                        let empty = makeCharData (attribute: cd.attribute, code: 0, size: 0)
-                                        existingLine [nextX] = empty
-                                        buffer.x += 1
-                                    } else {
-                                        updateCharData(&cd, char: newCh, size: Int32(oldSize))
-                                    }
-                                } else if isVs15 {
-                                    updateCharData(&cd, char: newCh, size: 1)
-                                    if oldSize == 2 && buffer.x > 0 {
-                                        buffer.x -= 1
-                                    }
-                                } else {
-                                    updateCharData(&cd, char: newCh, size: Int32 (cd.width))
-                                    if cd.width != oldSize {
-                                        buffer.x += 1
-                                    }
-                                }
-                                existingLine [lastx] = cd
-                                updateRange(borrowing: buffer, last.y)
-                                continue
-                            }
-                        }
-                    }
+                switch combine (ch, scalar: firstScalar, width: chWidth, buffer: buffer) {
+                case .joined, .dropped:
+                    continue
+                case .separate:
+                    break
                 }
             }
             if chWidth == 0 {
@@ -1424,10 +1827,30 @@ open class Terminal {
         return newIndex
     }
 
+    /// The code for a cell's text, which may be more than one grapheme cluster
+    func code (forText text: String) -> Int32
+    {
+        if text.count == 1, let char = text.first {
+            return code (for: char)
+        }
+        if let existingIdx = textToIndexMap [text] {
+            return existingIdx
+        }
+        let newIndex = lastCharIndex
+        textToIndexMap [text] = newIndex
+        indexToTextMap [newIndex] = text
+        lastCharIndex = lastCharIndex + 1
+        return newIndex
+    }
+
     private func character (for code: Int32) -> Character
     {
         if code > Int32(CharData.maxRune) {
-            return indexToCharMap [code] ?? " "
+            if let char = indexToCharMap [code] {
+                return char
+            }
+            // A cell with several clusters answers with its first; getText has all of it
+            return indexToTextMap [code]?.first ?? " "
         }
         if let c = Unicode.Scalar (UInt32 (code)) {
             return Character (c)
@@ -1438,6 +1861,22 @@ open class Terminal {
     public func getCharacter (for charData: CharData) -> Character
     {
         return character (for: charData.code)
+    }
+
+    /// All of a cell's text. It is one grapheme cluster, except where a
+    /// `.tmux` width mode joined more into the cell, as tmux does.
+    public func getText (for charData: CharData) -> String
+    {
+        if charData.code > Int32(CharData.maxRune) {
+            // Most cells hold one cluster; tmux's joined cells are in the text map
+            if let char = indexToCharMap [charData.code] {
+                return String (char)
+            }
+            if let text = indexToTextMap [charData.code] {
+                return text
+            }
+        }
+        return String (character (for: charData.code))
     }
 
     public func makeCharData (attribute: Attribute, code: Int32, size: Int8 = 1) -> CharData
@@ -1971,7 +2410,7 @@ open class Terminal {
         
             // If the request is a query, reply with the current color definition
             if p+1 < data.endIndex && data [p+1] == UInt8 (ascii: "?") {
-                sendResponse (cc.OSC, "4;\(color);\(ansiColors [color].formatAsXcolor())", cc.ST)
+                sendResponse (cc.OSC, "4;\(color);\(ansiColors [color].formatAsXcolor())", oscReplyTerminator)
                 parsePos = p+2
                 if parsePos < data.endIndex && data [parsePos] == UInt8(ascii: ";"){
                     parsePos += 1
@@ -1997,7 +2436,13 @@ open class Terminal {
     }
     
     func reportColor (oscCode: Int, color: Color) {
-        sendResponse(cc.OSC, "\(oscCode);\(color.formatAsXcolor ())", cc.ST)
+        sendResponse(cc.OSC, "\(oscCode);\(color.formatAsXcolor ())", oscReplyTerminator)
+    }
+
+    /// OSC replies end the way the query did (BEL or ST), as in xterm and
+    /// Ghostty, so shell scripts reading up to BEL do not hang.
+    var oscReplyTerminator: [UInt8] {
+        parser.oscTerminatedByBel ? [ControlCodes.BEL] : cc.ST
     }
     
     // This handles both setting the foreground, but spill into background and cursor color
@@ -2830,7 +3275,7 @@ open class Terminal {
                     let line = buffer.lines [row+buffer.yBase]
                     for col in left...right {
                         let cd = line [col]
-                        let ch = cd.code == 0 ? " " : getCharacter (for: cd)
+                        let ch = cd.code == 0 ? " " : getText (for: cd)
                         
                         for scalar in ch.unicodeScalars {
                             checksum += scalar.value
@@ -3234,6 +3679,39 @@ open class Terminal {
         }
     }
     
+    /// The terminal name reported to XTVERSION (`CSI > q`) as `name(version)`,
+    /// the form kitty and foot use; tmux shows it as `client_termtype`.  Hosts
+    /// set it, and ``xtversionVersion``, once at launch, before any terminal
+    /// exists, which is why the unsynchronized access is acceptable.
+    nonisolated(unsafe) public static var xtversionName = "SwiftTerm"
+
+    /// The version reported to XTVERSION; defaults to the upstream SwiftTerm
+    /// release this fork is based on.
+    nonisolated(unsafe) public static var xtversionVersion = "1.13.0"
+
+    //
+    // CSI > Ps q - Report xterm name and version (XTVERSION)
+    //   Ps = 0 (or omitted) -> DCS > | name(version) ST
+    // The name is not one tmux has a feature table for, so tmux keeps
+    // detecting features from DA1 and terminfo.
+    func cmdXtVersion (_ pars: [Int])
+    {
+        guard pars.isEmpty || pars == [0] else {
+            return
+        }
+        let text = Terminal.xtversionText (name: Terminal.xtversionName, version: Terminal.xtversionVersion)
+        sendResponse (cc.DCS, ">|" + text, cc.ST)
+    }
+
+    /// `name(version)` in printable ASCII, so a host string cannot end the DCS early
+    static func xtversionText (name: String, version: String) -> String
+    {
+        let text = "\(name)(\(version))".unicodeScalars
+            .filter { $0.value >= 0x20 && $0.value < 0x7f }
+            .map { Character ($0) }
+        return String (text.prefix (100))
+    }
+
     //
     // CSI Ps SP q  Set cursor style (DECSCUSR, VT520).
     //   Ps = 0  -> blinking block.
@@ -3373,8 +3851,24 @@ open class Terminal {
                 // keyboard emulation mode: 1050, 1051, 1052, 1053, 1060, 1061
             case 2004:
                 res = bracketedPasteMode ? modeSet : modeReset
+            case 1047, 1049: // alternate screen buffer
+                res = isCurrentBufferAlternate ? modeSet : modeReset
             case 2026:
-                res = synchronizedOutputActive ? modeSet : modeReset
+                // Only an application's DECSET 2026 counts: the automatic
+                // sync around buffer switches is a display detail.
+                res = synchronizedOutputActive && !synchronizedOutputIsAuto ? modeSet : modeReset
+            case 2027: // grapheme clustering (https://github.com/contour-terminal/terminal-unicode-core)
+                switch widthMode {
+                case .unicode:
+                    res = modeSet
+                case .wcwidth:
+                    res = modeReset
+                case .tmux:
+                    // Attached to tmux the widths are tmux's, whatever is asked
+                    res = modeAlwaysReset
+                }
+            case 2031: // color scheme update notifications
+                res = colorSchemeUpdates ? modeSet : modeReset
             default:
                 break
             }
@@ -3393,6 +3887,8 @@ open class Terminal {
                 res = modeAlwaysReset
             case 7: // VEM vertical editing
                 res = modeAlwaysReset
+            case 8: // BDSM bidirectional support
+                res = implicitBidi ? modeSet : modeReset
             case 10: // HEM horizontal editing
                 res = modeAlwaysReset
             case 11: // PUM positioning unit
@@ -3563,8 +4059,10 @@ open class Terminal {
                 // cursor position
                 let y = max (1, buffer.y + 1 - (originMode ? buffer.scrollTop : 0))
                 
-                // Need the max, because the cursor could be before the leftMargin
-                let x = max (1, buffer.x + 1 - (originMode ? buffer.marginLeft : 0))
+                // Need the max, because the cursor could be before the leftMargin.
+                // A pending wrap leaves buffer.x one past the last column; xterm
+                // reports the last column, which shells use to measure prompts.
+                let x = max (1, min (buffer.x, cols - 1) + 1 - (originMode ? buffer.marginLeft : 0))
                 sendResponse (cc.CSI, "\(y);\(x)R")
             default:
                 break;
@@ -3576,8 +4074,9 @@ open class Terminal {
             case 6:
                 // cursor position
                 let y = buffer.y + 1 - (originMode ? buffer.scrollTop : 0)
-                // Need the max, because the cursor could be before the leftMargin
-                let x = max (1, buffer.x + 1  - (usingMargins () ? buffer.marginLeft : 0))
+                // Need the max, because the cursor could be before the leftMargin;
+                // a pending wrap reports the last column, as in CPR
+                let x = max (1, min (buffer.x, cols - 1) + 1  - (usingMargins () ? buffer.marginLeft : 0))
                 sendResponse (cc.CSI, "?\(y);\(x);1R")
             case 15:
                 // Request printer status report, we respond "We are ready"
@@ -3616,6 +4115,9 @@ open class Terminal {
             case 85:
                 // Multiple session status, we reply single session
                 sendResponse (cc.CSI, "?83n")
+            case 996:
+                // Color scheme query (contour, tmux, kitty, Ghostty)
+                sendColorSchemeReport ()
             default:
                 break
             }
@@ -3699,6 +4201,12 @@ open class Terminal {
             // TODO: XTMODKEYS
             if collect[0] == UInt8(ascii: ">") {
                 break
+            }
+            // XTQMODKEYS - CSI ? 4 m: modifyOtherKeys is not implemented,
+            // so its level is 0 whatever XTMODKEYS asked for.  vim relies
+            // on this reply to know how keys will be encoded.
+            if collect[0] == UInt8(ascii: "?") && pars == [4] {
+                sendResponse (cc.CSI, ">4;0m")
             }
         default:
             break
@@ -4118,6 +4626,10 @@ open class Terminal {
             case 4:
                 // IRM Insert/Replace Mode
                 setInsertMode(false)
+            case 8:
+                // BDSM: the application orders right-to-left text itself
+                implicitBidi = false
+                refresh (startRow: 0, endRow: rows - 1)
             case 20:
                 // LNM—Line Feed/New Line Mode
                 lineFeedMode = false
@@ -4222,6 +4734,12 @@ open class Terminal {
                 break
             case 2026: // synchronized output (https://github.com/contour-terminal/vt-extensions)
                 endSynchronizedOutput ()
+            case 2027: // grapheme clustering off: widths per code point, as wcwidth(3)
+                if case .unicode = effectiveWidthMode {
+                    effectiveWidthMode = .wcwidth (wcwidthTable)
+                }
+            case 2031: // color scheme update notifications
+                colorSchemeUpdates = false
             default:
                 log ("Unhandled DEC Private Mode Reset (DECRST) with \(par)")
                 break
@@ -4345,6 +4863,10 @@ open class Terminal {
 //                 SRM—Local Echo: Send/Receive Mode
 //                 When implemented, hook up cmdDecRqm
 //                break
+            case 8:
+                // BDSM: the terminal orders right-to-left text for display
+                implicitBidi = true
+                refresh (startRow: 0, endRow: rows - 1)
             case 20:
                 // Automatic New Line (LNM)
                 lineFeedMode = true
@@ -4470,6 +4992,12 @@ open class Terminal {
                 bracketedPasteMode = true
             case 2026: // synchronized output (https://github.com/contour-terminal/vt-extensions)
                 beginSynchronizedOutput ()
+            case 2027: // grapheme clustering (https://github.com/contour-terminal/terminal-unicode-core)
+                if case .wcwidth = effectiveWidthMode {
+                    effectiveWidthMode = .unicode
+                }
+            case 2031: // color scheme update notifications (https://contour-terminal.org/vt-extensions/color-palette-update-notifications/)
+                colorSchemeUpdates = true
             default:
                 log ("Unhandled DEC Private Mode Set (DECSET) with \(par)")
                 break;
@@ -4632,6 +5160,12 @@ open class Terminal {
             return
         }
         
+        if collect == [UInt8 (ascii: "=")] {
+            // DA3 Tertiary Device Attributes: DECRPTUI with a zero unit id
+            sendResponse (cc.DCS, "!|00000000", cc.ST)
+            return
+        }
+
         // We should use a terminal emulation level, and not rely on the TERM name
         // for now, "xterm" as a part of the name surfaces all the capabilities.
         let name = options.termName
@@ -5139,7 +5673,9 @@ open class Terminal {
     public func parse (buffer: ArraySlice<UInt8>)
     {
         preParseYBase = self.buffer.yBase
+        isParsing = true
         parser.parse(data: buffer)
+        isParsing = false
         if synchronizedOutputActive {
             // Reset the safety timer on each chunk so a slow-network redraw
             // that spans more than the safety window doesn't get its partial
@@ -5629,6 +6165,8 @@ open class Terminal {
     public func resetToInitialState ()
     {
         endSynchronizedOutput ()
+        effectiveWidthMode = configuredWidthMode
+        implicitBidi = true
         options.rows = rows
         options.cols = cols
         setup (isReset: true)
@@ -7335,7 +7873,9 @@ open class Terminal {
     
     func translateBufferLineToString (buffer: Buffer, line: Int, start: Int, end: Int) -> String
     {
-        buffer.translateBufferLineToString(lineIndex: line, trimRight: true, startCol: start, endCol: end, skipNullCellsFollowingWide: true, characterProvider: { self.getCharacter(for: $0) }).replacingOccurrences(of: "\u{0}", with: " ")
+        // Blank cells become spaces here: replacing NUL afterwards misses one that
+        // a skin tone or combining mark merged into a single Character
+        buffer.translateBufferLineToString(lineIndex: line, trimRight: true, startCol: start, endCol: end, skipNullCellsFollowingWide: true, textProvider: { $0.code == 0 ? " " : self.getText(for: $0) })
     }
 }
 

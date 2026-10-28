@@ -326,6 +326,13 @@ public class Color: Hashable {
         self.blue = blue
     }
     
+    /// True when the perceived luminance (ITU-R BT.601 weights) is above half,
+    /// which is how dark and light color schemes are told apart.
+    var isLight: Bool {
+        let luminance = 0.299 * Double(red) + 0.587 * Double(green) + 0.114 * Double(blue)
+        return luminance > 65535.0 / 2
+    }
+
     func formatAsXcolor () -> String
     {
         let rs = String(format:"%04x", red)

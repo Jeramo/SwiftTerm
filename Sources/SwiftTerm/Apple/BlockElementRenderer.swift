@@ -96,7 +96,7 @@ struct BlockElementMapping {
 }
 
 struct BlockElementRenderItem {
-    let column: Int
+    var column: Int
     let columnWidth: Int
     let codePoint: UInt32
     let rects: [BlockElementRect]

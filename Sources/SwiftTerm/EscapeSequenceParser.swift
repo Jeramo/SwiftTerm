@@ -351,6 +351,9 @@ public class EscapeSequenceParser {
     public var oscHandlers: [Int:OscHandler] = [:]
 
     var activeDcsHandler: DcsHandler? = nil
+    /// Whether the OSC being dispatched ended with BEL rather than ST, so
+    /// replies can use the same terminator as the query (xterm, Ghostty).
+    var oscTerminatedByBel = false
     var errorHandler: (ParsingState) -> ParsingState = { (state : ParsingState) -> ParsingState in return state; }
 
     // Reference to the terminal for direct dispatch
@@ -440,7 +443,12 @@ public class EscapeSequenceParser {
         case 0x6d: terminal.cmdCsiM(pars, collect)              // m
         case 0x6e: terminal.cmdDeviceStatus(pars, collect)      // n
         case 0x70: terminal.csiPHandler(pars, collect)          // p
-        case 0x71: terminal.cmdSetCursorStyle(pars, collect)    // q
+        case 0x71:                                              // q
+            if collect == [0x3e] {
+                terminal.cmdXtVersion(pars)                     // > q
+            } else {
+                terminal.cmdSetCursorStyle(pars, collect)
+            }
         case 0x72: terminal.cmdSetScrollRegion(pars, collect)   // r
         case 0x73:                                              // s
             // Only plain CSI s is overloaded between save-cursor and DECSLRM.
@@ -592,6 +600,8 @@ public class EscapeSequenceParser {
         // Match on collect + code
         if collect == [0x24] && code == 0x71 {  // "$q"
             return Terminal.DECRQSS(terminal: terminal)
+        } else if collect == [0x2b] && code == 0x71 {  // "+q"
+            return Terminal.XTGETTCAP(terminal: terminal)
         } else if collect.isEmpty && code == 0x71 {  // "q"
             return SixelDcsHandler(terminal: terminal)
         }
@@ -885,6 +895,7 @@ public class EscapeSequenceParser {
                             oscCode = EscapeSequenceParser.parseInt(osc[0...])
                             content = []
                         }
+                        oscTerminatedByBel = code == ControlCodes.BEL
                         dispatchOsc(code: oscCode, data: content)
                     }
                 }

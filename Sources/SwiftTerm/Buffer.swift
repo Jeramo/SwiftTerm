@@ -250,7 +250,6 @@ public final class Buffer {
         }
     }
     
-    private var curAttr: Attribute = Attribute.empty
     private var insertMode: Bool = false
     private var marginMode: Bool = false
     private var wraparound: Bool = false
@@ -583,10 +582,10 @@ public final class Buffer {
         }
     }
     
-    func translateBufferLineToString (lineIndex: Int, trimRight: Bool, startCol: Int = 0, endCol: Int = -1, skipNullCellsFollowingWide: Bool = false, characterProvider: ((CharData) -> Character)? = nil) -> String
+    func translateBufferLineToString (lineIndex: Int, trimRight: Bool, startCol: Int = 0, endCol: Int = -1, skipNullCellsFollowingWide: Bool = false, characterProvider: ((CharData) -> Character)? = nil, textProvider: ((CharData) -> String)? = nil) -> String
     {
         let line = _lines [lineIndex]
-        return line.translateToString(trimRight: trimRight, startCol: startCol, endCol: endCol, skipNullCellsFollowingWide: skipNullCellsFollowingWide, characterProvider: characterProvider)
+        return line.translateToString(trimRight: trimRight, startCol: startCol, endCol: endCol, skipNullCellsFollowingWide: skipNullCellsFollowingWide, characterProvider: characterProvider, textProvider: textProvider)
     }
     
     func setupTabStops (index: Int = -1, tabStopWidth: Int)
@@ -1155,11 +1154,14 @@ public final class Buffer {
         Buffer.n += 1
     }
     
-    // This variable holds the last location that we poked a Character on.   This is required
-    // because combining unicode characters come after the character, so we need to poke back
-    // at this location.   We track the buffer (so we can distinguish Alt/Normal), the buffer line
-    // that we fetched, and the column.
-    var lastBufferStorage: (y: Int, x: Int, cols: Int, rows: Int) = (0, 0, 0, 0)
+    /// The blank left where half of a wide character is overwritten. Like an
+    /// erase it keeps only the current background (as Ghostty does), so a redraw
+    /// over half of a wide character leaves neither a default-background hole
+    /// nor an inverse or underlined blank.
+    static func blankCell (keepingBackgroundOf attribute: Attribute) -> CharData
+    {
+        return CharData (attribute: Attribute (fg: CharData.defaultAttr.fg, bg: attribute.bg, style: CharData.defaultAttr.style))
+    }
 
     /// Bulk-inserts ASCII characters (all width-1, non-combining).
     /// Returns number of bytes consumed. Returns 0 if insert mode is active.
@@ -1187,8 +1189,7 @@ public final class Buffer {
             // trailing half of a previous wide char (orphaning its leading
             // half), and the last cell may be the leading half of a wide
             // char (orphaning its trailing half just past the run).
-            var emptyCell = CharData.Null
-            emptyCell.attribute = attribute
+            let emptyCell = Buffer.blankCell (keepingBackgroundOf: attribute)
             row.cleanupWideCharHalves(at: _x, fillData: emptyCell)
             row.cleanupWideCharHalves(at: _x + runLen - 1, fillData: emptyCell)
             for i in 0..<runLen {
@@ -1197,9 +1198,6 @@ public final class Buffer {
             _x += runLen
             consumed += runLen
             idx += runLen
-        }
-        if consumed > 0 {
-            lastBufferStorage = (_y + _yBase, _x - 1, _cols, _rows)
         }
         return consumed
     }
@@ -1242,8 +1240,7 @@ public final class Buffer {
 
         // insert mode: move characters to right
         if insertMode {
-            var empty = CharData.Null
-            empty.attribute = curAttr
+            let empty = Buffer.blankCell (keepingBackgroundOf: charData.attribute)
             // right shift cells according to the width
             bufferRow.insertCells (pos: _x, n: chWidth, rightMargin: marginMode ? _marginRight : _cols-1, fillData: empty)
             // test last cell - since the last cell has only room for
@@ -1256,7 +1253,6 @@ public final class Buffer {
         }
 
         // write current char to buffer and advance cursor
-        lastBufferStorage = (_y + _yBase, _x, _cols, _rows)
         if _x >= _cols {
             _x = _cols-1
         }
@@ -1266,10 +1262,8 @@ public final class Buffer {
         // about to clobber) renders as a different glyph paired with the
         // wrong stub, producing the kind of cell-level corruption mosh
         // redraws expose.
-        var wideEmpty = CharData(attribute: curAttr, scalar: UnicodeScalar(0)!, size: 0)
-        wideEmpty.attribute = curAttr
-        var emptyCell = CharData.Null
-        emptyCell.attribute = curAttr
+        let wideEmpty = CharData(attribute: charData.attribute, scalar: UnicodeScalar(0)!, size: 0)
+        let emptyCell = Buffer.blankCell (keepingBackgroundOf: charData.attribute)
         bufferRow.cleanupWideCharHalves(at: _x, fillData: emptyCell)
         bufferRow[_x] = charData
         _x += 1

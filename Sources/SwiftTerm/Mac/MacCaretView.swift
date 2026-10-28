@@ -18,6 +18,8 @@ import CoreText
 class CaretView: NSView, CALayerDelegate {
     weak var terminal: TerminalView?
     var ctline: CTLine?
+    /// Grapheme clusters in the text under the cursor
+    var textClusters = 1
     var bgColor: CGColor
     var tracksFocus = true
     
@@ -45,9 +47,11 @@ class CaretView: NSView, CALayerDelegate {
     }
     
     func setText (ch: CharData) {
-        let character = terminal?.terminal.getCharacter(for: ch) ?? " "
+        // All of the cell's text: a tmux cell can hold more than one character
+        let text = terminal?.terminal.getText(for: ch) ?? " "
+        textClusters = text.count
         let res = NSAttributedString (
-            string: String (character),
+            string: text,
             attributes: terminal?.getAttributedValue(ch.attribute, usingFg: caretColor, andBg: caretTextColor ?? terminal?.nativeForegroundColor ?? NSColor.black))
         ctline = CTLineCreateWithAttributedString(res)
 

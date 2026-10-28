@@ -144,7 +144,14 @@ public struct Attribute: Equatable, Hashable {
             result += ";3"
         }
         if style.contains (.underline) {
-            result += ";4"
+            // Styled underlines use the colon form, as in Ghostty; neovim only
+            // enables undercurl when the reply to SGR 4:3 contains "4:3"
+            switch underlineStyle {
+            case .none, .single:
+                result += ";4"
+            default:
+                result += ";4:\(underlineStyle.rawValue)"
+            }
         }
         if style.contains (.blink) {
             result += ";5"
@@ -159,15 +166,18 @@ public struct Attribute: Equatable, Hashable {
             result += ";9"
         }
         
+        // Extended colors use the ITU T.416 colon form (xterm, Ghostty): the
+        // reply is one ';'-separated list of attributes, and neovim only turns
+        // on truecolor when the reply to SGR 48;2;1;2;3 is "0;48:2::1:2:3"
         switch fg {
         case .ansi256(let c):
             if c >= 16 {
-                result += ";38;5;\(c)"
+                result += ";38:5:\(c)"
             } else {
                 result += ";\(c >= 8 ? 9 : 3)\(c >= 8 ? c - 8 : c)"
             }
         case .trueColor(let r, let g, let b):
-            result += ";38;2;\(r);\(g);\(b)"
+            result += ";38:2::\(r):\(g):\(b)"
         default:
             break
         }
@@ -175,12 +185,21 @@ public struct Attribute: Equatable, Hashable {
         switch bg {
         case .ansi256(let c):
             if c >= 16 {
-                result += ";48;5;\(c)"
+                result += ";48:5:\(c)"
             } else {
                 result += ";\(c >= 8 ? 10 : 4)\(c >= 8 ? c - 8 : c)"
             }
         case .trueColor(let r, let g, let b):
-            result += ";48;2;\(r);\(g);\(b)"
+            result += ";48:2::\(r):\(g):\(b)"
+        default:
+            break
+        }
+
+        switch underlineColor {
+        case .ansi256(let c):
+            result += ";58:5:\(c)"
+        case .trueColor(let r, let g, let b):
+            result += ";58:2::\(r):\(g):\(b)"
         default:
             break
         }

@@ -236,8 +236,9 @@ final class SearchEngine {
         }
 
         let stringLine = cacheEntry.lineAsString
-        let offsets = cacheEntry.lineOffsets
-        let offset = bufferColsToStringOffset(startRow: row, cols: col)
+        let columns = cacheEntry.columns
+        // The first Character starting at or after the search column
+        let offset = columns.firstIndex(where: { $0 >= col }) ?? max(columns.count - 1, 0)
         let options = searchOptions ?? SearchOptions()
 
         var resultIndex: Int?
@@ -294,83 +295,13 @@ final class SearchEngine {
             return nil
         }
 
-        var startRowOffset = 0
-        while startRowOffset < offsets.count - 1 && foundIndex >= offsets[startRowOffset + 1] {
-            startRowOffset += 1
-        }
-
-        var endRowOffset = startRowOffset
-        while endRowOffset < offsets.count - 1 && (foundIndex + matchTerm.count) >= offsets[endRowOffset + 1] {
-            endRowOffset += 1
-        }
-
-        let startColOffset = foundIndex - offsets[startRowOffset]
-        let endColOffset = foundIndex + matchTerm.count - offsets[endRowOffset]
-        let startColIndex = stringLengthToBufferSize(row: row + startRowOffset, offset: startColOffset)
-        let endColIndex = stringLengthToBufferSize(row: row + endRowOffset, offset: endColOffset)
-        let size = endColIndex - startColIndex + terminal.cols * (endRowOffset - startRowOffset)
-
-        return SearchResult(term: matchTerm, col: startColIndex, row: row + startRowOffset, size: size)
-    }
-
-    private func stringLengthToBufferSize (row: Int, offset: Int) -> Int {
-        let buffer = terminal.displayBuffer
-        guard row >= 0 && row < buffer.lines.count else {
-            return 0
-        }
-        if offset == 0 {
-            return 0
-        }
-
-        let line = buffer.lines[row]
-        var adjustedOffset = offset
-        var i = 0
-        while i < adjustedOffset && i < line.count {
-            let cell = line[i]
-            if cell.width == 2 {
-                let nextIndex = i + 1
-                if nextIndex < line.count {
-                    let nextCell = line[nextIndex]
-                    if nextCell.width == 0 {
-                        adjustedOffset += 1
-                    }
-                }
-            }
-            i += 1
-        }
-
-        return adjustedOffset
-    }
-
-    private func bufferColsToStringOffset (startRow: Int, cols: Int) -> Int {
-        let buffer = terminal.displayBuffer
-        var lineIndex = startRow
-        var offset = 0
-        var remainingCols = cols
-
-        while remainingCols > 0 && lineIndex < buffer.lines.count {
-            let line = buffer.lines[lineIndex]
-            let limit = min(remainingCols, terminal.cols)
-            if limit > 0 {
-                for i in 0..<limit {
-                    let cell = line[i]
-                    if cell.width > 0 {
-                        offset += 1
-                    }
-                }
-            }
-            lineIndex += 1
-            if lineIndex >= buffer.lines.count {
-                break
-            }
-            let nextLine = buffer.lines[lineIndex]
-            if !nextLine.isWrapped {
-                break
-            }
-            remainingCols -= terminal.cols
-        }
-
-        return offset
+        // Map Characters back to cells: a Character can span several cells
+        // ("a" + "🏽" are one Character over three columns)
+        let last = columns.count - 1
+        let startColumn = columns[min(foundIndex, last)]
+        let endColumn = columns[min(foundIndex + matchTerm.count, last)]
+        let cols = terminal.cols
+        return SearchResult(term: matchTerm, col: startColumn % cols, row: row + startColumn / cols, size: endColumn - startColumn)
     }
 }
 

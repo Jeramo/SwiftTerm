@@ -48,6 +48,15 @@ extension CaretView {
         }
         let caretFG = caretTextColor ?? terminal.nativeForegroundColor
         context.setFillColor(caretFG.cgColor)
+        // Several characters wider than the cell (tmux joins what follows a
+        // ZWJ) are shrunk to fit, as the terminal draws them
+        let ink = CTLineGetBoundsWithOptions(ctline, .useGlyphPathBounds)
+        if textClusters > 1 && ink.width > bounds.width + 0.5 {
+            let scale = bounds.width / ink.width
+            context.translateBy(x: 0, y: bounds.height / 2)
+            context.scaleBy(x: scale, y: scale)
+            context.translateBy(x: -ink.minX, y: -bounds.height / 2)
+        }
         for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
             let runGlyphsCount = CTRunGetGlyphCount(run)
             let runAttributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
@@ -58,8 +67,10 @@ extension CaretView {
                 count = runGlyphsCount
             }
 
-            var positions = runGlyphs.enumerated().map { (i: Int, glyph: CGGlyph) -> CGPoint in
-                CGPoint(x: 0, y: yOffset)
+            var positions = [CGPoint](repeating: .zero, count: runGlyphsCount)
+            CTRunGetPositions(run, CFRange(), &positions)
+            for i in 0..<runGlyphsCount {
+                positions[i].y += yOffset
             }
             CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
         }

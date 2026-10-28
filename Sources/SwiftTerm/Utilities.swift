@@ -306,6 +306,89 @@ struct UnicodeUtil {
         return bisearch(rune: rune.value, table: UnicodeWidthData.emojiVs16Base, max: UnicodeWidthData.emojiVs16Base.count - 1) != 0
     }
 
+    /// A spacing combining mark (General_Category Mc, as in कि), or the Thai
+    /// and Lao AM that also stay in the cluster before them: drawn with that
+    /// cluster but, unlike a nonspacing mark, taking room of its own
+    static func isSpacingMark (_ rune: UnicodeScalar) -> Bool
+    {
+        switch rune.value {
+        case 0x0E33, 0x0EB3:
+            return true
+        case 0x0900...0x1CFF, 0xA800...0xABFF, 0x11000...0x11FFF, 0x16F00...0x16FFF, 0x1D165...0x1D172:
+            return rune.properties.generalCategory == .spacingMark
+        default:
+            return false
+        }
+    }
+
+    private static func inTable (_ value: UInt32, _ table: [LH]) -> Bool
+    {
+        return bisearch(rune: value, table: table, max: table.count - 1) != 0
+    }
+
+    /// Columns for a code point under the given width rules
+    static func columnWidth (rune: UnicodeScalar, rules: WidthRules) -> Int
+    {
+        let irune = rune.value
+        // ASCII and the C0/C1 controls measure the same everywhere
+        if irune < 0xA0 {
+            return columnWidth(rune: rune)
+        }
+        if rules.tmuxWidths {
+            if isRegionalIndicator(rune) {
+                return rules.regionalIndicatorWidth
+            }
+            if (irune >= 0x1F3FB && irune <= 0x1F3FF) || inTable(irune, TmuxWidthData.wideBases) {
+                return 2
+            }
+        }
+        switch rules.base {
+        case .unicode:
+            let width = columnWidth(rune: rune)
+            // A spacing mark with nothing to attach to takes a column, as in Ghostty
+            if width == 0 && isSpacingMark(rune) {
+                return 1
+            }
+            return width
+        case .glibc:
+            return glibcWidth(irune)
+        case .utf8proc:
+            if inTable(irune, WcwidthData.utf8procZero) {
+                return 0
+            }
+            if inTable(irune, WcwidthData.utf8procNarrow) {
+                return 1
+            }
+            if inTable(irune, WcwidthData.utf8procWide) {
+                return 2
+            }
+            return glibcWidth(irune)
+        case .darwin:
+            if inTable(irune, WcwidthData.darwinZero) {
+                return 0
+            }
+            if inTable(irune, WcwidthData.darwinNarrow) {
+                return 1
+            }
+            if inTable(irune, WcwidthData.darwinWide) {
+                return 2
+            }
+            return glibcWidth(irune)
+        }
+    }
+
+    /// glibc 2.41 wcwidth(3) for a printable code point; unassigned ones are one column
+    static func glibcWidth (_ value: UInt32) -> Int
+    {
+        if inTable(value, WcwidthData.glibcWide) {
+            return 2
+        }
+        if inTable(value, WcwidthData.glibcZero) {
+            return 0
+        }
+        return 1
+    }
+
     private static func isEastAsianWide (_ value: UInt32) -> Bool
     {
         if UnicodeWidthData.eastAsianWide.isEmpty {
@@ -353,8 +436,10 @@ struct UnicodeUtil {
         case .lineSeparator, .paragraphSeparator:
             return 0
         case .modifierSymbol:
+            // A skin tone joins the emoji before it in handlePrint; one with
+            // nothing to join is a wide swatch (tmux, zellij, glibc, Ghostty).
             if props.isEmojiModifier {
-                return 0
+                return 2
             }
             if isFullwidthModifierSymbol(irune) {
                 return 2

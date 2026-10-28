@@ -22,11 +22,11 @@ final class SearchTests {
         let terminal = makeTerminal()
         let cache = SearchLineCache(terminal: terminal)
 
-        cache.setLineInCache(row: 0, entry: ("test", [0]))
+        cache.setLineInCache(row: 0, entry: ("test", [0], [0, 1, 2, 3, 4]))
         #expect(cache.getLineFromCache(row: 0) == nil)
 
         cache.initLinesCache()
-        cache.setLineInCache(row: 0, entry: ("test", [0]))
+        cache.setLineInCache(row: 0, entry: ("test", [0], [0, 1, 2, 3, 4]))
         #expect(cache.getLineFromCache(row: 0)?.lineAsString == "test")
     }
 
@@ -35,7 +35,7 @@ final class SearchTests {
         let cache = SearchLineCache(terminal: terminal)
 
         cache.initLinesCache()
-        cache.setLineInCache(row: 0, entry: ("test", [0]))
+        cache.setLineInCache(row: 0, entry: ("test", [0], [0, 1, 2, 3, 4]))
         cache.initLinesCache()
 
         #expect(cache.getLineFromCache(row: 0)?.lineAsString == "test")

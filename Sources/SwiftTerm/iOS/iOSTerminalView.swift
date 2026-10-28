@@ -76,12 +76,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         /// through to Apple Color Emoji and render as colorful pictographs
         /// in the middle of monospaced terminal output. This is rarely
         /// what users want for TUI tools like Claude Code.
+        /// The font's own cascade list (an app's Nerd Font, CJK fonts) is kept:
+        /// the text-symbol fonts go after it, before Apple Color Emoji.
         private static func withTextSymbolFallback (_ font: UIFont) -> UIFont {
             let size = font.pointSize
             let fallbackNames = ["AppleSymbols", "STIXTwoText-Regular", "Menlo-Regular", "HelveticaNeue"]
-            let cascade: [CTFontDescriptor] = fallbackNames.map { name in
+            let symbols: [CTFontDescriptor] = fallbackNames.map { name in
                 CTFontDescriptorCreateWithNameAndSize(name as CFString, size)
             }
+            let existing = CTFontDescriptorCopyAttribute(font.fontDescriptor as CTFontDescriptor, kCTFontCascadeListAttribute) as? [CTFontDescriptor] ?? []
+            let isEmoji = { (descriptor: CTFontDescriptor) -> Bool in
+                (CTFontDescriptorCopyAttribute(descriptor, kCTFontNameAttribute) as? String) == "AppleColorEmoji"
+            }
+            let cascade = existing.filter { !isEmoji($0) } + symbols + existing.filter(isEmoji)
             let attrs: [CFString: Any] = [
                 kCTFontCascadeListAttribute: cascade
             ]
